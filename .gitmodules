@@ -1,6 +1,8 @@
 [submodule "kernel"]
 	path = kernel
 	url = https://github.com/jasonleecode/fiasco.git
+	ignore = untracked
 [submodule "l4re"]
 	path = l4re
 	url = https://github.com/jasonleecode/l4re-core.git
+	ignore = untracked
