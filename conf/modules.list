@@ -1,0 +1,18 @@
+# 文件路径: conf/modules.list
+# 定义一个启动项，名字叫 "fiasco-base-test"
+entry fiasco-base-test
+
+# 1. 挂载内核 (开启串口转义序列 -serial_esc)
+kernel fiasco -serial_esc
+
+# 2. 挂载初始内存管理器 (Sigma0)
+module sigma0
+
+# 3. 挂载根任务服务器 (Moe) 并指定它去拉起 ned
+roottask moe rom/ned
+
+# 4. 挂载必要的 L4Re 基础库和脚本解释器 (Ned)
+module l4re
+module ned
+
+# 注意：以后你写的 my_driver 和 native_shell 也是加在这个列表后面
