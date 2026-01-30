@@ -1,0 +1,129 @@
+# TuringOS Driver Configuration
+#
+# This is the top-level Kconfig for the TuringOS driver menuconfig system.
+# It sources all driver package Kconfig.L4 files and provides simple
+# enable/disable switches for packages without their own Kconfig.L4.
+
+mainmenu "TuringOS Driver Configuration"
+
+# ---- Packages with existing Kconfig.L4 ----
+
+comment "--- Core Components ---"
+
+source "pkg/drivers/bootstrap/Kconfig.turingos"
+
+source "pkg/drivers/cons/Kconfig.L4"
+
+source "pkg/drivers/drivers-frst/Kconfig.L4"
+
+source "pkg/drivers/tinit/Kconfig.L4"
+
+comment "--- Storage Drivers ---"
+
+source "pkg/drivers/emmc-driver/Kconfig.L4"
+
+comment "--- Bus & Peripheral Drivers ---"
+
+source "pkg/drivers/i2c-driver/Kconfig.L4"
+
+source "pkg/drivers/io/Kconfig.turingos"
+
+source "pkg/drivers/rtc/Kconfig.L4"
+
+comment "--- Virtualization ---"
+
+source "pkg/drivers/uvmm/Kconfig.L4"
+
+source "pkg/drivers/tvmm/Kconfig.L4"
+
+source "pkg/drivers/virtio-net-switch/Kconfig.L4"
+
+comment "--- Packages without detailed Kconfig ---"
+
+menu "Additional driver packages"
+
+config PKG_ACPICA
+	bool "acpica - ACPI Component Architecture"
+	default n
+	help
+	  ACPI Component Architecture library. Required for ACPI support
+	  on x86/amd64 and optionally on arm64 platforms.
+
+config PKG_ADA
+	bool "ada - Ada runtime support"
+	default n
+
+config PKG_AHCI_DRIVER
+	bool "ahci-driver - AHCI/SATA disk driver"
+	default n
+	help
+	  AHCI controller driver for SATA disk access.
+
+config PKG_ATKINS
+	bool "atkins - Atkins test framework"
+	default n
+
+config PKG_BCM2835_MBOX_DRIVER
+	bool "bcm2835-mbox-driver - Raspberry Pi mailbox driver"
+	default y
+	help
+	  Mailbox driver for Raspberry Pi (BCM2835/BCM2711).
+	  Required by emmc-driver for RPi SD card support.
+
+config PKG_GNU_EFI
+	bool "gnu-efi - GNU EFI library"
+	default n
+
+config PKG_HELLO
+	bool "hello - Hello world example"
+	default n
+
+config PKG_L4VIRTIO
+	bool "l4virtio - L4 Virtio support library"
+	default n
+	help
+	  Virtio transport library for L4Re. Required by virtio-based
+	  drivers and virtual machine monitors.
+
+config PKG_LIBBLOCK_DEVICE
+	bool "libblock-device - Block device library"
+	default n
+	help
+	  Common block device abstraction library used by storage drivers.
+
+config PKG_LIBFDT
+	bool "libfdt - Flattened Device Tree library"
+	default n
+	help
+	  Library for parsing and manipulating Flattened Device Trees (FDT/DTB).
+
+config PKG_LIBVCPU
+	bool "libvcpu - Virtual CPU library"
+	default n
+	help
+	  Library for virtual CPU management. Used by virtual machine monitors.
+
+config PKG_NVME_DRIVER
+	bool "nvme-driver - NVMe disk driver"
+	default n
+	help
+	  NVMe controller driver for NVMe SSD access.
+
+config PKG_READLINE
+	bool "readline - Line editing library"
+	default n
+
+config PKG_VIRTIO_NET
+	bool "virtio-net - Virtio network driver"
+	default n
+	help
+	  Virtio network device driver.
+
+config PKG_ZLIB
+	bool "zlib - Compression library"
+	default n
+	help
+	  ZLIB compression/decompression library. Required for compressed
+	  bootstrap modules and uvmm gzip loader.
+
+endmenu

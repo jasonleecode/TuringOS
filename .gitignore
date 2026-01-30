@@ -1,0 +1,12 @@
+# Build artifacts
+/build/
+/.kconfig_build/
+/.claude/
+
+# Driver configuration (user-specific)
+/.config
+/.config.old
+
+# Generated config files (from syncconfig)
+/include/config/
+/include/generated/

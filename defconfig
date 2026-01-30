@@ -1,0 +1,100 @@
+#
+# TuringOS Default Configuration - Raspberry Pi 4B
+#
+
+#
+# Bootstrap
+#
+# CONFIG_BOOTSTRAP_ROOTTASK_NX is not set
+# CONFIG_BOOTSTRAP_THUMB_ENTRY is not set
+# CONFIG_BOOTSTRAP_COMPRESS is not set
+# CONFIG_BOOTSTRAP_CHECK_MD5 is not set
+
+#
+# Console multiplexer
+#
+# CONFIG_CONS_USE_ASYNC_FE is not set
+
+#
+# UART drivers
+#
+CONFIG_DRIVERS_FRST_UART_ALL_DRIVERS=y
+
+#
+# Tiny system loader
+#
+CONFIG_TINIT_VERBOSITY_INFO=y
+CONFIG_TINIT_RUN_ROOTTASK=y
+CONFIG_TINIT_HEAP_SIZE=1024
+CONFIG_TINIT_MAP_DEBUG_CAP=y
+CONFIG_TINIT_DYNAMIC_LOADER=y
+
+#
+# eMMC driver - enable BCM2711 for RPi4 SD card
+#
+CONFIG_EMMC_DRV_SDHCI_BCM2711=y
+CONFIG_EMMC_DRV_SDHCI_USDHC=y
+CONFIG_EMMC_DRV_SDHCI_PLAIN=y
+CONFIG_EMMC_DRV_SDHI_RCAR3=y
+# CONFIG_EMMC_DRV_SDHI_RCAR3_EMU is not set
+
+#
+# I2C driver
+#
+CONFIG_I2C_DRIVER_RPI4=y
+# CONFIG_I2C_DRIVER_IMX8 is not set
+
+#
+# io platform manager
+#
+# CONFIG_L4IO_ACPI is not set
+CONFIG_L4IO_PCI=y
+CONFIG_L4IO_PCIID_DB=y
+# CONFIG_L4IO_PCI_SRIOV is not set
+CONFIG_L4IO_SCU_IMX8QM=y
+CONFIG_L4IO_IOMUXC_IMX8MP=y
+CONFIG_L4IO_GPIO_BCM2835=y
+CONFIG_L4IO_GPIO_OMAP=y
+CONFIG_L4IO_GPIO_QCOM=y
+CONFIG_L4IO_GPIO_IMX=y
+
+#
+# RTC
+#
+# CONFIG_RTC_DS3231 is not set
+# CONFIG_RTC_PCF85063A is not set
+
+#
+# uvmm - disabled by default for basic RPi4 setup
+#
+# CONFIG_UVMM_MONITOR is not set
+
+#
+# tvmm - disabled (ARM32 only)
+#
+
+#
+# Virtual network switch
+#
+# CONFIG_VNS_PORT_FILTER is not set
+# CONFIG_VNS_IXL is not set
+# CONFIG_VNS_STATS is not set
+
+#
+# Additional driver packages
+#
+# CONFIG_PKG_ACPICA is not set
+# CONFIG_PKG_ADA is not set
+# CONFIG_PKG_AHCI_DRIVER is not set
+# CONFIG_PKG_ATKINS is not set
+CONFIG_PKG_BCM2835_MBOX_DRIVER=y
+# CONFIG_PKG_GNU_EFI is not set
+# CONFIG_PKG_HELLO is not set
+# CONFIG_PKG_L4VIRTIO is not set
+CONFIG_PKG_LIBBLOCK_DEVICE=y
+# CONFIG_PKG_LIBFDT is not set
+# CONFIG_PKG_LIBVCPU is not set
+# CONFIG_PKG_NVME_DRIVER is not set
+# CONFIG_PKG_READLINE is not set
+# CONFIG_PKG_VIRTIO_NET is not set
+# CONFIG_PKG_ZLIB is not set
