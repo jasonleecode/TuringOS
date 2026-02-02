@@ -6,6 +6,9 @@
 	path = l4re
 	url = https://github.com/jasonleecode/l4re-core.git
 	ignore = untracked
+[submodule "l4mk"]
+	path = l4mk
+	url = https://github.com/kernkonzept/mk.git
 [submodule "pkg/drivers/acpica"]
 	path = pkg/drivers/acpica
 	url = https://github.com/kernkonzept/acpica.git
@@ -84,6 +87,4 @@
 [submodule "pkg/drivers/virtio-net-switch"]
 	path = pkg/drivers/virtio-net-switch
 	url = https://github.com/kernkonzept/l4_virtio-net-switch.git
-[submodule "l4mk"]
-	path = l4mk
-	url = https://github.com/kernkonzept/mk.git
+

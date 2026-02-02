@@ -9,8 +9,15 @@
 
 PROJ_ROOT := $(CURDIR)
 KCONFIG_SRC := $(PROJ_ROOT)/l4mk/tool/kconfig/scripts/kconfig
-KCONFIG_BUILD := $(PROJ_ROOT)/.kconfig_build
+KCONFIG_BUILD := $(PROJ_ROOT)/build/kconfig_tools
 KCONFIG_FILE := $(PROJ_ROOT)/Kconfig
+
+# All kconfig output goes under build/
+KCONFIG_CONFIG := $(PROJ_ROOT)/build/.config
+KCONFIG_AUTOHEADER := $(PROJ_ROOT)/build/include/generated/autoconf.h
+KCONFIG_AUTOCONFIG := $(PROJ_ROOT)/build/include/config/auto.conf
+
+export KCONFIG_CONFIG KCONFIG_AUTOHEADER KCONFIG_AUTOCONFIG
 
 HOSTCC ?= cc
 HOSTCXX ?= c++
@@ -52,36 +59,36 @@ HOST_CFLAGS_MCONF := $(NCURSES_CFLAGS)
 .PHONY: menuconfig defconfig oldconfig olddefconfig savedefconfig \
         allnoconfig allyesconfig syncconfig clean help
 
-menuconfig: $(KCONFIG_BUILD)/mconf
+menuconfig: $(KCONFIG_BUILD)/mconf | build_dirs
 	$< $(KCONFIG_FILE)
 	@$(MAKE) --no-print-directory syncconfig
 
-defconfig: $(KCONFIG_BUILD)/conf
+defconfig: $(KCONFIG_BUILD)/conf | build_dirs
 	$< --defconfig=$(PROJ_ROOT)/defconfig $(KCONFIG_FILE)
 	@$(MAKE) --no-print-directory syncconfig
 
-oldconfig: $(KCONFIG_BUILD)/conf
+oldconfig: $(KCONFIG_BUILD)/conf | build_dirs
 	$< --oldconfig $(KCONFIG_FILE)
 	@$(MAKE) --no-print-directory syncconfig
 
-olddefconfig: $(KCONFIG_BUILD)/conf
+olddefconfig: $(KCONFIG_BUILD)/conf | build_dirs
 	$< --olddefconfig $(KCONFIG_FILE)
 	@$(MAKE) --no-print-directory syncconfig
 
-savedefconfig: $(KCONFIG_BUILD)/conf
+savedefconfig: $(KCONFIG_BUILD)/conf | build_dirs
 	$< --savedefconfig=defconfig $(KCONFIG_FILE)
 
-allnoconfig: $(KCONFIG_BUILD)/conf
+allnoconfig: $(KCONFIG_BUILD)/conf | build_dirs
 	$< --allnoconfig $(KCONFIG_FILE)
 	@$(MAKE) --no-print-directory syncconfig
 
-allyesconfig: $(KCONFIG_BUILD)/conf
+allyesconfig: $(KCONFIG_BUILD)/conf | build_dirs
 	$< --allyesconfig $(KCONFIG_FILE)
 	@$(MAKE) --no-print-directory syncconfig
 
-# Generate include/config/auto.conf and include/generated/autoconf.h from .config
-syncconfig: $(KCONFIG_BUILD)/conf
-	@test -f $(PROJ_ROOT)/.config || \
+# Generate build/include/config/auto.conf and build/include/generated/autoconf.h
+syncconfig: $(KCONFIG_BUILD)/conf | build_dirs
+	@test -f $(KCONFIG_CONFIG) || \
 		{ echo "Error: .config not found. Run 'make defconfig' or 'make menuconfig' first."; exit 1; }
 	$< --syncconfig $(KCONFIG_FILE)
 
@@ -99,14 +106,20 @@ help:
 	@echo '  allyesconfig  - Enable all optional drivers'
 	@echo '  clean         - Remove kconfig build artifacts'
 	@echo ''
-	@echo 'Output files:'
-	@echo '  .config                       - Current driver configuration'
-	@echo '  include/config/auto.conf      - Makefile-includable config (for L4Re build)'
-	@echo '  include/generated/autoconf.h  - C header with CONFIG_* defines'
+	@echo 'Output files (all under build/):'
+	@echo '  build/.config                       - Current driver configuration'
+	@echo '  build/include/config/auto.conf      - Makefile-includable config'
+	@echo '  build/include/generated/autoconf.h  - C header with CONFIG_* defines'
 
 # ============================================================
 # Build kconfig tools
 # ============================================================
+
+# Ensure output directories exist
+.PHONY: build_dirs
+build_dirs:
+	@mkdir -p $(dir $(KCONFIG_AUTOHEADER))
+	@mkdir -p $(dir $(KCONFIG_AUTOCONFIG))
 
 $(KCONFIG_BUILD)/mconf: $(MCONF_OBJS)
 	$(HOSTCC) -o $@ $^ $(NCURSES_LIBS)
@@ -145,3 +158,5 @@ $(KCONFIG_BUILD):
 
 clean:
 	rm -rf $(KCONFIG_BUILD)
+	rm -f $(KCONFIG_CONFIG) $(KCONFIG_CONFIG).old
+	rm -rf $(PROJ_ROOT)/build/include

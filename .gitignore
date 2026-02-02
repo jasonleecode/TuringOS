@@ -1,15 +1,21 @@
-# Build artifacts
+# Build artifacts (all build output goes under build/)
 /build/
-/.kconfig_build/
 /.claude/
 
-# Driver configuration (user-specific)
+# Kernel build directories
+/kernel/build/
+/kernel/build_bbb/
+
+# L4Re build directories
+/l4re/build_arm64/
+/l4re/build_arm/
+
+# Driver configuration (legacy, now under build/)
 /.config
 /.config.old
-
-# Generated config files (from syncconfig)
 /include/config/
 /include/generated/
+/.kconfig_build/
 
 # Build-time symlinks in l4mk/pkg/
 /l4mk/pkg/l4re-core

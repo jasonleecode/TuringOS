@@ -1,12 +1,13 @@
 #!/bin/bash
 # TuringOS 构建脚本
 # 用法:
-#   ./build.sh              # 完整构建 (内核 + L4Re + 引导镜像)
+#   ./build.sh              # 完整构建 (默认 RPi4)
 #   ./build.sh kernel       # 仅构建内核
 #   ./build.sh l4re         # 仅构建 L4Re
 #   ./build.sh bootstrap    # 仅生成引导镜像
 #   ./build.sh menuconfig   # 交互式驱动配置菜单
 #   ./build.sh clean        # 清理所有构建产物
+#   ./build.sh --board bbb l4re  # 为 BeagleBone Black 构建 L4Re
 
 set -e
 
@@ -19,13 +20,8 @@ fi
 
 PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 KERNEL_DIR="$PROJ_ROOT/kernel"
-KERNEL_BUILD="$KERNEL_DIR/build"
-KERNEL_TEMPLATE="arm64-rpi4"
-L4RE_DIR="$PROJ_ROOT/l4re"
-L4RE_BUILD="$L4RE_DIR/build_arm64"
 CONF_DIR="$PROJ_ROOT/conf"
 BUILD_OUT="$PROJ_ROOT/build"
-export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-elf-}"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -38,6 +34,41 @@ warn()  { echo -e "${YELLOW}!!! $1${NC}"; }
 error() { echo -e "${RED}*** $1${NC}"; exit 1; }
 
 # ============================================================
+# 目标板配置
+# ============================================================
+setup_board() {
+    local board="$1"
+    case "$board" in
+        rpi4)
+            BOARD_NAME="Raspberry Pi 4B"
+            BOARD_ARCH="ARM64"
+            export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-elf-}"
+            KERNEL_BUILD="$KERNEL_DIR/build"
+            KERNEL_TEMPLATE="arm64-rpi4"
+            L4RE_BUILD="$PROJ_ROOT/l4re/build_arm64"
+            L4RE_TEMPLATE="arm64-rv-v8a"
+            QEMU_CMD="qemu-system-aarch64"
+            ;;
+        bbb)
+            BOARD_NAME="BeagleBone Black (AM335x)"
+            BOARD_ARCH="ARM"
+            export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-eabi-}"
+            KERNEL_BUILD="$KERNEL_DIR/build_bbb"
+            KERNEL_TEMPLATE="arm-omap3-am33xx"
+            L4RE_BUILD="$PROJ_ROOT/l4re/build_arm"
+            L4RE_TEMPLATE="arm-omap3-am33xx"
+            QEMU_CMD=""  # AM335x 无 QEMU 支持
+            ;;
+        *)
+            error "未知目标板: $board
+支持的目标板:
+  rpi4   Raspberry Pi 4B (ARM64, 默认)
+  bbb    BeagleBone Black (AM335x, ARM)"
+            ;;
+    esac
+}
+
+# ============================================================
 # 检查构建依赖
 # ============================================================
 check_deps() {
@@ -45,13 +76,26 @@ check_deps() {
 
     # 检查交叉编译工具链
     if ! command -v "${CROSS_COMPILE}gcc" &>/dev/null; then
-        error "找不到交叉编译器: ${CROSS_COMPILE}gcc
+        case "$BOARD" in
+            bbb)
+                error "找不到交叉编译器: ${CROSS_COMPILE}gcc
+请安装 ARM 工具链:
+  macOS:   brew install arm-none-eabi-gcc
+  Ubuntu:  sudo apt install gcc-arm-none-eabi
+  Fedora:  sudo dnf install arm-none-eabi-gcc-cs
+或设置 CROSS_COMPILE 环境变量指向你的工具链前缀:
+  export CROSS_COMPILE=arm-none-eabi-"
+                ;;
+            *)
+                error "找不到交叉编译器: ${CROSS_COMPILE}gcc
 请安装 aarch64 工具链:
   macOS:   brew install aarch64-elf-gcc  (或使用 aarch64-linux-gnu- 前缀的工具链)
   Ubuntu:  sudo apt install gcc-aarch64-linux-gnu
   Fedora:  sudo dnf install gcc-aarch64-linux-gnu
 或设置 CROSS_COMPILE 环境变量指向你的工具链前缀:
   export CROSS_COMPILE=aarch64-none-elf-"
+                ;;
+        esac
     fi
 
     # 检查 make
@@ -65,8 +109,8 @@ check_deps() {
     fi
 
     # 检查 qemu (可选，仅用于运行)
-    if ! command -v qemu-system-aarch64 &>/dev/null; then
-        warn "找不到 qemu-system-aarch64，构建可以继续但无法运行"
+    if [ -n "$QEMU_CMD" ] && ! command -v "$QEMU_CMD" &>/dev/null; then
+        warn "找不到 $QEMU_CMD，构建可以继续但无法运行"
     fi
 
     # 检查 flex/bison (kconfig 工具构建需要)
@@ -87,7 +131,7 @@ init_submodules() {
     info "检查 Git 子模块..."
     cd "$PROJ_ROOT"
 
-    if [ ! -f "$KERNEL_DIR/Makefile" ] || [ ! -f "$L4RE_DIR/Makefile" ]; then
+    if [ ! -f "$KERNEL_DIR/Makefile" ] || [ ! -f "$PROJ_ROOT/l4re/Makefile" ]; then
         info "初始化 Git 子模块..."
         git submodule update --init --recursive
     fi
@@ -114,7 +158,7 @@ build_kernel() {
     if [ "$need_rebuild" -eq 1 ]; then
         rm -rf "$KERNEL_BUILD"
         info "创建内核构建目录 (模板: $KERNEL_TEMPLATE)..."
-        $MAKE BUILDDIR=build T="$KERNEL_TEMPLATE"
+        $MAKE BUILDDIR="$(basename "$KERNEL_BUILD")" T="$KERNEL_TEMPLATE"
     fi
 
     # 编译内核
@@ -246,8 +290,8 @@ MAKECONF_EOF
     fi
 
     if [ ! -d "$L4RE_BUILD" ]; then
-        info "创建 L4Re 构建目录 (模板: arm64-rv-v8a)..."
-        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T=arm64-rv-v8a
+        info "创建 L4Re 构建目录 (模板: $L4RE_TEMPLATE)..."
+        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T="$L4RE_TEMPLATE"
     fi
 
     cd "$L4RE_BUILD"
@@ -282,7 +326,11 @@ build_bootstrap() {
     if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
         cp "$L4RE_BUILD/images/bootstrap.elf" "$BUILD_OUT/"
         info "引导镜像已生成: $BUILD_OUT/bootstrap.elf"
-        info "可使用 ./run_qemu.sh 启动系统"
+        if [ -n "$QEMU_CMD" ]; then
+            info "可使用 ./run_qemu.sh 启动系统"
+        else
+            info "BBB 需要真机部署: 通过 U-Boot 从 SD 卡加载"
+        fi
     else
         error "引导镜像生成失败"
     fi
@@ -315,8 +363,8 @@ do_clean() {
 # 驱动配置
 # ============================================================
 check_config() {
-    if [ ! -f "$PROJ_ROOT/.config" ]; then
-        warn "驱动配置文件 (.config) 不存在"
+    if [ ! -f "$BUILD_OUT/.config" ]; then
+        warn "驱动配置文件 (build/.config) 不存在"
         info "使用默认配置 (defconfig) ..."
         $MAKE -C "$PROJ_ROOT" defconfig
     fi
@@ -324,8 +372,8 @@ check_config() {
 
 # 将配置同步到 L4Re 构建目录
 sync_config_to_l4re() {
-    local auto_conf="$PROJ_ROOT/include/config/auto.conf"
-    local autoconf_h="$PROJ_ROOT/include/generated/autoconf.h"
+    local auto_conf="$BUILD_OUT/include/config/auto.conf"
+    local autoconf_h="$BUILD_OUT/include/generated/autoconf.h"
 
     # 确保 auto.conf 存在 (syncconfig 已在 defconfig/menuconfig 中自动执行)
     if [ ! -f "$auto_conf" ]; then
@@ -342,8 +390,8 @@ sync_config_to_l4re() {
         cp "$autoconf_h" "$L4RE_BUILD/include/generated/autoconf.h"
 
         # 复制依赖跟踪用的空文件 (用于 make 增量构建)
-        if [ -d "$PROJ_ROOT/include/config" ]; then
-            find "$PROJ_ROOT/include/config" -maxdepth 1 -type f ! -name 'auto.conf*' \
+        if [ -d "$BUILD_OUT/include/config" ]; then
+            find "$BUILD_OUT/include/config" -maxdepth 1 -type f ! -name 'auto.conf*' \
                 -exec cp {} "$L4RE_BUILD/include/config/" \;
         fi
         info "驱动配置已同步"
@@ -359,11 +407,36 @@ do_menuconfig() {
 # 主流程
 # ============================================================
 main() {
-    local target="${1:-all}"
+    # 解析 --board 参数
+    local board="rpi4"
+    local target=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --board)
+                board="$2"
+                shift 2
+                ;;
+            -h|--help)
+                show_usage
+                exit 0
+                ;;
+            *)
+                target="$1"
+                shift
+                ;;
+        esac
+    done
+
+    target="${target:-all}"
+
+    # 设置目标板相关变量
+    BOARD="$board"
+    setup_board "$board"
 
     echo "========================================"
     echo "  TuringOS 构建系统"
-    echo "  目标平台: ARM64 (Raspberry Pi 4B)"
+    echo "  目标板: $BOARD_NAME ($BOARD_ARCH)"
     echo "  交叉编译器: ${CROSS_COMPILE}gcc"
     echo "========================================"
 
@@ -401,23 +474,37 @@ main() {
             do_clean
             ;;
         *)
-            echo "用法: $0 {all|kernel|l4re|bootstrap|menuconfig|defconfig|clean}"
-            echo ""
-            echo "  all         完整构建 (内核 + L4Re + 引导镜像)"
-            echo "  kernel      仅构建 Fiasco 内核"
-            echo "  l4re        仅构建 L4Re 运行时"
-            echo "  bootstrap   仅生成引导镜像 (需先完成 kernel 和 l4re)"
-            echo "  menuconfig  交互式驱动配置菜单"
-            echo "  defconfig   使用默认 RPi4 驱动配置"
-            echo "  clean       清理所有构建产物"
-            echo ""
-            echo "环境变量:"
-            echo "  CROSS_COMPILE  交叉编译器前缀 (默认: aarch64-linux-gnu-)"
+            show_usage
             exit 1
             ;;
     esac
 
     info "构建完成!"
+}
+
+show_usage() {
+    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|menuconfig|defconfig|clean}"
+    echo ""
+    echo "目标板 (--board):"
+    echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
+    echo "  bbb         BeagleBone Black, AM335x ARM"
+    echo ""
+    echo "构建目标:"
+    echo "  all         完整构建 (内核 + L4Re + 引导镜像)"
+    echo "  kernel      仅构建 Fiasco 内核"
+    echo "  l4re        仅构建 L4Re 运行时"
+    echo "  bootstrap   仅生成引导镜像 (需先完成 kernel 和 l4re)"
+    echo "  menuconfig  交互式驱动配置菜单"
+    echo "  defconfig   使用默认驱动配置"
+    echo "  clean       清理所有构建产物"
+    echo ""
+    echo "示例:"
+    echo "  $0                       # 默认 RPi4 全量构建"
+    echo "  $0 --board bbb l4re      # 为 BBB 构建 L4Re"
+    echo "  $0 --board bbb all       # BBB 全量构建"
+    echo ""
+    echo "环境变量:"
+    echo "  CROSS_COMPILE  交叉编译器前缀 (会根据 --board 自动设置)"
 }
 
 main "$@"
