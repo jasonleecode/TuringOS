@@ -10,3 +10,12 @@
 # Generated config files (from syncconfig)
 /include/config/
 /include/generated/
+
+# Build-time symlinks in l4mk/pkg/
+/l4mk/pkg/l4re-core
+/l4mk/pkg/drivers
+
+# Build-time generated files by build.sh
+/l4mk/mk/aliases.d/0*
+/l4mk/mk/aliases.d/1*
+/l4mk/Makeconf.local
