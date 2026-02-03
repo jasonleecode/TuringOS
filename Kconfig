@@ -26,6 +26,8 @@ comment "--- Bus & Peripheral Drivers ---"
 
 source "pkg/drivers/i2c-driver/Kconfig.L4"
 
+source "pkg/drivers/spi-driver/Kconfig.L4"
+
 source "pkg/drivers/io/Kconfig.turingos"
 
 source "pkg/drivers/rtc/Kconfig.L4"

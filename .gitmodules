@@ -88,3 +88,9 @@
 	path = pkg/drivers/virtio-net-switch
 	url = https://github.com/kernkonzept/l4_virtio-net-switch.git
 
+[submodule "pkg/library/usb"]
+	path = pkg/library/usb
+	url = git@github.com:L4Re/usb.git
+[submodule "pkg/library/lwip"]
+	path = pkg/library/lwip
+	url = git@github.com:L4Re/lwip.git

@@ -1,0 +1,15 @@
+menu "SPI driver"
+
+config SPI_DRIVER_RPI4
+	bool "RPI4"
+	default y
+	help
+	  Include support for the Raspberry Pi 4 SPI controller (BCM2835).
+
+config SPI_DRIVER_IMX8
+	bool "i.MX8"
+	default y
+	help
+	  Include support for the i.MX8 eCSPI controller.
+
+endmenu
