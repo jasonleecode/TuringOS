@@ -103,6 +103,13 @@ config PKG_LIBVCPU
 	help
 	  Library for virtual CPU management. Used by virtual machine monitors.
 
+config PKG_NATIVE_SHELL
+	bool "native_shell - Interactive shell"
+	default y
+	select PKG_READLINE
+	help
+	  Serial-interactive shell with readline support.
+
 config PKG_NVME_DRIVER
 	bool "nvme-driver - NVMe disk driver"
 	default n

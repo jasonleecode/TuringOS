@@ -16,3 +16,8 @@ module l4re
 module ned
 
 # 注意：以后你写的 my_driver 和 native_shell 也是加在这个列表后面
+
+# 5. 挂载 native_shell 及其依赖库
+module native_shell
+module libreadline.so
+module libhistory.so

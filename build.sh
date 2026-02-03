@@ -52,7 +52,13 @@ setup_board() {
         bbb)
             BOARD_NAME="BeagleBone Black (AM335x)"
             BOARD_ARCH="ARM"
-            export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-eabi-}"
+            export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
+            # macOS: brew 安装的工具链不在默认 PATH 中
+            local _arm_brew_prefix
+            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null)"
+            if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
+                export PATH="$_arm_brew_prefix/bin:$PATH"
+            fi
             KERNEL_BUILD="$KERNEL_DIR/build_bbb"
             KERNEL_TEMPLATE="arm-omap3-am33xx"
             L4RE_BUILD="$PROJ_ROOT/l4re/build_arm"
@@ -79,12 +85,12 @@ check_deps() {
         case "$BOARD" in
             bbb)
                 error "找不到交叉编译器: ${CROSS_COMPILE}gcc
-请安装 ARM 工具链:
-  macOS:   brew install arm-none-eabi-gcc
-  Ubuntu:  sudo apt install gcc-arm-none-eabi
-  Fedora:  sudo dnf install arm-none-eabi-gcc-cs
+请安装 ARM Linux 工具链:
+  macOS:   brew tap messense/macos-cross-toolchains && brew install arm-unknown-linux-gnueabihf
+  Ubuntu:  sudo apt install gcc-arm-linux-gnueabihf
+  Fedora:  sudo dnf install gcc-arm-linux-gnu
 或设置 CROSS_COMPILE 环境变量指向你的工具链前缀:
-  export CROSS_COMPILE=arm-none-eabi-"
+  export CROSS_COMPILE=arm-linux-gnueabihf-"
                 ;;
             *)
                 error "找不到交叉编译器: ${CROSS_COMPILE}gcc

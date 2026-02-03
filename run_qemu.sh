@@ -36,7 +36,7 @@ case "$BOARD" in
         BOARD_NAME="BeagleBone Black (AM335x)"
         BUILD_DIR="$PROJ_ROOT/l4re/build_arm"
         KERNEL_BUILD="$PROJ_ROOT/kernel/build_bbb"
-        CROSS_COMPILE="arm-none-eabi-"
+        CROSS_COMPILE="arm-linux-gnueabihf-"
         ;;
     *)
         BOARD_NAME="Raspberry Pi 4B"
