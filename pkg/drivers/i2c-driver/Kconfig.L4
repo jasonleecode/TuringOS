@@ -1,0 +1,22 @@
+menu "I2C driver"
+
+config I2C_DRIVER_RPI4
+	bool "RPI4"
+	default y
+	help
+	  Include support for the Raspberry Pi 4 I2C controller.
+
+config I2C_DRIVER_IMX8
+	bool "i.MX8"
+	default y
+	help
+	  Include support for the i.MX8 I2C controller.
+
+config I2C_DRIVER_AM335X
+	bool "AM335x (BeagleBone Black)"
+	default y
+	help
+	  Include support for the TI AM335x I2C controller
+	  (BeagleBone Black and compatible boards).
+
+endmenu

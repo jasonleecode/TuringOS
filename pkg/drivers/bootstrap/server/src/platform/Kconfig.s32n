@@ -1,0 +1,33 @@
+# Copyright 2023-2025 NXP
+# SPDX-License-Identifier: MIT
+#
+# S32N platform configuration
+# Disabled: choice blocks incompatible with kconfig 6.18+
+# Original upstream uses if/choice syntax not supported by newer kconfig parsers.
+
+if PLATFORM_TYPE_s32n5
+
+config BOOTSTRAP_PF_S32N_DYN_ALLOC_OVERRIDE
+	bool "Override dynamic allocation region"
+	help
+	  Specify region of dynamic allocations manually. By default the whole
+	  CRAM region of the respective RTU is used.
+
+config BOOTSTRAP_PF_S32N_DYN_ALLOC_START
+	hex "Dynamic alloction base address"
+	depends on BOOTSTRAP_PF_S32N_DYN_ALLOC_OVERRIDE
+	default 0x39580000
+	help
+	  Lower address of region where dynamic allocations are done. This
+	  includes the multiboot information and possibly dynamic placement
+	  of the initial tasks.
+
+config BOOTSTRAP_PF_S32N_DYN_ALLOC_END
+	hex "Dynamic allocations end address"
+	depends on BOOTSTRAP_PF_S32N_DYN_ALLOC_OVERRIDE
+	default 0x39ffffff
+	help
+	  Upper address (inclusive) of region where dynamic allocations are
+	  done.
+
+endif # PLATFORM_TYPE_s32n5

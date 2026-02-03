@@ -1,0 +1,3 @@
+requires: stdlibs libstdc++ libio-vbus l4virtio drivers-frst
+provides: i2c-driver i2c-server
+maintainer: philipp.eppelt@kernkonzept.com

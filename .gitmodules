@@ -24,9 +24,6 @@
 [submodule "pkg/drivers/bcm2835-mbox-driver"]
 	path = pkg/drivers/bcm2835-mbox-driver
 	url = https://github.com/kernkonzept/bcm2835-mbox-driver.git
-[submodule "pkg/drivers/bootstrap"]
-	path = pkg/drivers/bootstrap
-	url = https://github.com/kernkonzept/bootstrap.git
 [submodule "pkg/drivers/cons"]
 	path = pkg/drivers/cons
 	url = https://github.com/kernkonzept/cons.git
@@ -42,12 +39,6 @@
 [submodule "pkg/drivers/hello"]
 	path = pkg/drivers/hello
 	url = https://github.com/kernkonzept/hello.git
-[submodule "pkg/drivers/i2c-driver"]
-	path = pkg/drivers/i2c-driver
-	url = https://github.com/kernkonzept/i2c-driver.git
-[submodule "pkg/drivers/io"]
-	path = pkg/drivers/io
-	url = https://github.com/kernkonzept/io.git
 [submodule "pkg/drivers/l4virtio"]
 	path = pkg/drivers/l4virtio
 	url = https://github.com/kernkonzept/l4virtio.git
@@ -66,9 +57,6 @@
 [submodule "pkg/drivers/readline"]
 	path = pkg/drivers/readline
 	url = https://github.com/kernkonzept/readline.git
-[submodule "pkg/drivers/rtc"]
-	path = pkg/drivers/rtc
-	url = https://github.com/kernkonzept/rtc.git
 [submodule "pkg/drivers/tinit"]
 	path = pkg/drivers/tinit
 	url = https://github.com/kernkonzept/tinit.git
