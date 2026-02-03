@@ -1,0 +1,2 @@
+requires: stdlibs libstdc++ libio-vbus spi-driver
+provides: ssd1306

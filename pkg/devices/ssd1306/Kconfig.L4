@@ -1,0 +1,104 @@
+menu "SSD1306 OLED display driver"
+
+config SSD1306
+	bool "Enable SSD1306 OLED display driver (SPI)"
+	default y
+	help
+	  SSD1306-based OLED display driver over SPI.
+	  Supports 128x64 and 128x32 display variants.
+
+if SSD1306
+
+choice
+	prompt "Display resolution"
+	default SSD1306_128X64
+
+config SSD1306_128X64
+	bool "128x64"
+	help
+	  Standard 128x64 pixel OLED display.
+
+config SSD1306_128X32
+	bool "128x32"
+	help
+	  Smaller 128x32 pixel OLED display.
+
+endchoice
+
+config SSD1306_HEIGHT
+	int
+	default 64 if SSD1306_128X64
+	default 32 if SSD1306_128X32
+
+choice
+	prompt "SPI controller backend"
+	default SSD1306_SPI_BCM2835
+
+config SSD1306_SPI_BCM2835
+	bool "BCM2835 (Raspberry Pi)"
+	depends on SPI_DRIVER_RPI4
+	help
+	  Use the BCM2835 SPI controller on Raspberry Pi.
+
+config SSD1306_SPI_IMX8
+	bool "i.MX8 eCSPI"
+	depends on SPI_DRIVER_IMX8
+	help
+	  Use the i.MX8 eCSPI controller.
+
+config SSD1306_SPI_AM335X
+	bool "AM335x McSPI (BeagleBone Black)"
+	depends on SPI_DRIVER_AM335X
+	help
+	  Use the TI AM335x McSPI controller on BeagleBone Black.
+
+endchoice
+
+config SSD1306_SPI_CS
+	int "SPI chip-select (CS) number"
+	range 0 3
+	default 0
+	help
+	  Which SPI chip-select line the display is wired to.
+
+config SSD1306_SPI_MODE
+	int "SPI mode (0-3)"
+	range 0 3
+	default 0
+	help
+	  SPI clock polarity/phase mode.
+	  Mode 0 (CPOL=0, CPHA=0) is the most common for SSD1306.
+
+config SSD1306_SPI_SPEED_KHZ
+	int "SPI clock speed (kHz)"
+	range 100 20000
+	default 8000
+	help
+	  SPI bus clock frequency in kHz.
+	  SSD1306 supports up to ~10 MHz; default is 8 MHz.
+
+config SSD1306_DC_PIN
+	int "D/C (Data/Command) GPIO pin number"
+	range 0 255
+	default 25
+	help
+	  GPIO pin number used for the Data/Command signal.
+	  Low = command, High = data.
+
+config SSD1306_CONTRAST
+	int "Default contrast (0-255)"
+	range 0 255
+	default 207
+	help
+	  Initial display contrast value (0xCF = 207).
+
+config SSD1306_BUILD_EXAMPLE
+	bool "Build ssd1306-example demo program"
+	default y
+	help
+	  Build the demonstration program that draws text and
+	  geometric shapes on the display.
+
+endif # SSD1306
+
+endmenu

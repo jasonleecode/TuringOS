@@ -18,6 +18,7 @@
 #include "controller.h"
 #include "bcm2835.h"
 #include "imx8.h"
+#include "am335x.h"
 
 // List of all supported controllers
 #ifdef CONFIG_SPI_DRIVER_RPI4
@@ -26,6 +27,10 @@ static Ctrl_bcm2835 __bcm2835;
 
 #ifdef CONFIG_SPI_DRIVER_IMX8
 static Imx8_spi::Ctrl_imx8 __imx8;
+#endif
+
+#ifdef CONFIG_SPI_DRIVER_AM335X
+static Am335x_spi::Ctrl_am335x __am335x;
 #endif
 
 // Pointer to active controller

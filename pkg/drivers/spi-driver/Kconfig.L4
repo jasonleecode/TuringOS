@@ -12,4 +12,11 @@ config SPI_DRIVER_IMX8
 	help
 	  Include support for the i.MX8 eCSPI controller.
 
+config SPI_DRIVER_AM335X
+	bool "AM335x (BeagleBone Black)"
+	default y
+	help
+	  Include support for the TI AM335x McSPI controller
+	  (BeagleBone Black and compatible boards).
+
 endmenu
