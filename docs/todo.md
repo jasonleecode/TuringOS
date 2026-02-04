@@ -41,3 +41,11 @@
 ### Wasm 运行时集成
 
 `pkg/wasm/` 目前为空。需要选型（wasm3 / wamr / wasmtime）并集成到构建系统和 Kconfig。
+
+
+### 参考qnx的代码
+
+实现一个驱动框架；POSIX兼容；Shell；
+
+## P3 - 当前需要改进的内容
+

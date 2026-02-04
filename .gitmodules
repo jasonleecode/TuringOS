@@ -36,9 +36,6 @@
 [submodule "pkg/drivers/gnu-efi"]
 	path = pkg/drivers/gnu-efi
 	url = https://github.com/kernkonzept/gnu-efi.git
-[submodule "pkg/drivers/hello"]
-	path = pkg/drivers/hello
-	url = https://github.com/kernkonzept/hello.git
 [submodule "pkg/drivers/l4virtio"]
 	path = pkg/drivers/l4virtio
 	url = https://github.com/kernkonzept/l4virtio.git

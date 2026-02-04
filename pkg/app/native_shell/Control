@@ -1,1 +1,1 @@
-requires: stdlibs readline
+requires: readline stdlibs compiler-rt

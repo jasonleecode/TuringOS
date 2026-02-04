@@ -17,7 +17,8 @@
 #   collect    - 收集构建产物到 build/artifacts 目录
 #   menuconfig - 交互式驱动配置菜单
 #   defconfig  - 使用默认驱动配置
-#   clean      - 清理所有构建产物
+#   clean      - 清理编译中间文件
+#   cleanall   - 完全清理构建目录
 #
 # 示例:
 #   ./build.sh                      # 默认 RPi4 全量构建
@@ -336,15 +337,53 @@ ifneq ($(patsubst $(_PRJ)/pkg/library/%,,$(CURDIR)),$(CURDIR))
   PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
 endif
 
+# pkg/app/<pkg>/ → l4mk/pkg/app/<pkg>/
+ifneq ($(patsubst $(_PRJ)/pkg/app/%,,$(CURDIR)),$(CURDIR))
+  _REL := $(patsubst $(_PRJ)/pkg/app/%,%,$(CURDIR))
+  SRC_DIR    := $(_L4_ABS)/pkg/app/$(_REL)
+  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
+  OBJ_DIR    := $(OBJ_BASE)/pkg/app/$(_REL)
+  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
+endif
+
+# pkg/devices/<pkg>/ → l4mk/pkg/devices/<pkg>/
+ifneq ($(patsubst $(_PRJ)/pkg/devices/%,,$(CURDIR)),$(CURDIR))
+  _REL := $(patsubst $(_PRJ)/pkg/devices/%,%,$(CURDIR))
+  SRC_DIR    := $(_L4_ABS)/pkg/devices/$(_REL)
+  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
+  OBJ_DIR    := $(OBJ_BASE)/pkg/devices/$(_REL)
+  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
+endif
+
 endif
 endif
 MAKECONF_EOF
         info "生成 l4mk/Makeconf.local (路径重映射)"
     fi
 
-    if [ ! -d "$L4RE_BUILD" ]; then
+    # 检查构建目录是否存在且配置完整
+    if [ ! -d "$L4RE_BUILD" ] || [ ! -f "$L4RE_BUILD/.config.all" ]; then
+        if [ -d "$L4RE_BUILD" ] && [ ! -f "$L4RE_BUILD/.config.all" ]; then
+            warn "构建目录存在但配置不完整，重新初始化..."
+            rm -rf "$L4RE_BUILD"
+        fi
+
         info "创建 L4Re 构建目录 (模板: $L4RE_TEMPLATE)..."
-        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T="$L4RE_TEMPLATE" CROSS_COMPILE="${CROSS_COMPILE}"
+        # PLATFORM_TYPE 应该与模板名称对应，从 defconfig 文件中提取
+        # 但由于 defconfig 已包含正确的 PLATFORM_TYPE，我们传递空值以避免重复
+        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T="$L4RE_TEMPLATE" PLATFORM_TYPE= CROSS_COMPILE="${CROSS_COMPILE}"
+
+        # 验证配置文件是否正确生成
+        if [ ! -f "$L4RE_BUILD/.config.all" ]; then
+            warn "配置文件未自动生成，手动运行 olddefconfig..."
+            $MAKE -C "$l4mk_dir" O="$L4RE_BUILD" CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
+        fi
+
+        # 再次验证
+        if [ ! -f "$L4RE_BUILD/.config.all" ]; then
+            error "L4Re 构建目录配置失败，请检查构建环境"
+        fi
+        info "L4Re 构建目录已初始化"
     fi
 
     cd "$L4RE_BUILD"
@@ -399,20 +438,61 @@ build_bootstrap() {
 # 清理构建产物
 # ============================================================
 do_clean() {
-    info "清理构建产物..."
+    local clean_type="${1:-full}"
 
-    # 清理内核
-    if [ -d "$KERNEL_BUILD" ]; then
-        $MAKE -C "$KERNEL_BUILD" clean 2>/dev/null || true
+    if [ "$clean_type" = "full" ]; then
+        info "完全清理构建产物..."
+
+        # 清理内核构建目录
+        if [ -d "$KERNEL_BUILD" ]; then
+            info "  清理内核构建目录: $KERNEL_BUILD"
+            rm -rf "$KERNEL_BUILD"
+        fi
+
+        # 清理 L4Re 构建目录
+        if [ -d "$L4RE_BUILD" ]; then
+            info "  清理 L4Re 构建目录: $L4RE_BUILD"
+            rm -rf "$L4RE_BUILD"
+        fi
+
+        # 清理 artifacts 目录
+        if [ -d "$BUILD_OUT/artifacts" ]; then
+            info "  清理 artifacts 目录"
+            rm -rf "$BUILD_OUT/artifacts"
+        fi
+
+        # 清理 bootstrap.elf
+        if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
+            info "  清理 bootstrap.elf"
+            rm -f "$BUILD_OUT/bootstrap.elf"
+        fi
+
+        # 清理 .config 文件
+        if [ -f "$BUILD_OUT/.config" ]; then
+            rm -f "$BUILD_OUT/.config" "$BUILD_OUT/.config.old"
+        fi
+
+    else
+        # 轻度清理：只清理编译中间文件
+        info "轻度清理（保留构建目录结构）..."
+
+        # 清理内核
+        if [ -d "$KERNEL_BUILD" ]; then
+            info "  清理内核中间文件"
+            $MAKE -C "$KERNEL_BUILD" clean 2>/dev/null || true
+        fi
+
+        # 清理 L4Re
+        if [ -d "$L4RE_BUILD" ]; then
+            info "  清理 L4Re 中间文件"
+            $MAKE -C "$L4RE_BUILD" clean 2>/dev/null || true
+        fi
+
+        # 清理 bootstrap.elf
+        if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
+            rm -f "$BUILD_OUT/bootstrap.elf"
+        fi
     fi
-
-    # 清理 L4Re
-    if [ -d "$L4RE_BUILD" ]; then
-        $MAKE -C "$L4RE_BUILD" clean 2>/dev/null || true
-    fi
-
-    # 清理输出目录
-    rm -f "$BUILD_OUT/bootstrap.elf"
 
     info "清理完成"
 }
@@ -651,7 +731,10 @@ main() {
             $MAKE -C "$PROJ_ROOT" defconfig
             ;;
         clean)
-            do_clean
+            do_clean "light"
+            ;;
+        cleanall)
+            do_clean "full"
             ;;
         *)
             show_usage
@@ -663,7 +746,7 @@ main() {
 }
 
 show_usage() {
-    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|menuconfig|defconfig|clean}"
+    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|menuconfig|defconfig|clean|cleanall}"
     echo ""
     echo "目标板 (--board):"
     echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
@@ -678,7 +761,8 @@ show_usage() {
     echo "  collect     收集构建产物到 build/artifacts 目录"
     echo "  menuconfig  交互式驱动配置菜单"
     echo "  defconfig   使用默认驱动配置"
-    echo "  clean       清理所有构建产物"
+    echo "  clean       清理编译中间文件（保留构建目录结构）"
+    echo "  cleanall    完全清理构建目录（删除 build/kernel_* 和 build/l4re_*）"
     echo ""
     echo "示例:"
     echo "  $0                       # 默认 RPi4 全量构建"
