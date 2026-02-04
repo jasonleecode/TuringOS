@@ -82,3 +82,6 @@
 [submodule "pkg/library/lwip"]
 	path = pkg/library/lwip
 	url = git@github.com:L4Re/lwip.git
+[submodule "pkg/library/wamr"]
+	path = pkg/library/wamr
+	url = git@github.com:jasonleecode/wasm-micro-runtime.git

@@ -21,3 +21,8 @@ module ned
 module native_shell
 module libreadline.so
 module libhistory.so
+# TuringOS 自定义入口
+entry fiasco-base-test
+roottask moe --init=rom/hello
+module l4re
+module hello

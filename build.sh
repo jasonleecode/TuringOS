@@ -1,13 +1,33 @@
 #!/bin/bash
 # TuringOS 构建脚本
+#
 # 用法:
-#   ./build.sh              # 完整构建 (默认 RPi4)
-#   ./build.sh kernel       # 仅构建内核
-#   ./build.sh l4re         # 仅构建 L4Re
-#   ./build.sh bootstrap    # 仅生成引导镜像
-#   ./build.sh menuconfig   # 交互式驱动配置菜单
-#   ./build.sh clean        # 清理所有构建产物
-#   ./build.sh --board bbb l4re  # 为 BeagleBone Black 构建 L4Re
+#   ./build.sh [--board <board>] <target>
+#
+# 目标板 (--board):
+#   rpi4   - Raspberry Pi 4B, ARM64 (默认)
+#   bbb    - BeagleBone Black, AM335x ARM (真实硬件)
+#   virt   - QEMU ARM Virt, Cortex-A15 (开发测试推荐)
+#
+# 构建目标:
+#   all        - 完整构建 (内核 + L4Re + 引导镜像 + 收集产物)
+#   kernel     - 仅构建 Fiasco 内核
+#   l4re       - 仅构建 L4Re 运行时
+#   bootstrap  - 仅生成引导镜像 (需先完成 kernel 和 l4re)
+#   collect    - 收集构建产物到 build/artifacts 目录
+#   menuconfig - 交互式驱动配置菜单
+#   defconfig  - 使用默认驱动配置
+#   clean      - 清理所有构建产物
+#
+# 示例:
+#   ./build.sh                      # 默认 RPi4 全量构建
+#   ./build.sh --board virt all     # QEMU virt 全量构建
+#   ./build.sh --board bbb kernel   # BeagleBone Black 构建内核
+#   ./build.sh --board virt collect # 仅收集 virt 构建产物
+#
+# 快速开始 (QEMU 测试):
+#   ./build.sh --board virt all     # 构建
+#   ./run_qemu_virt.sh              # 运行
 
 set -e
 
@@ -43,9 +63,9 @@ setup_board() {
             BOARD_NAME="Raspberry Pi 4B"
             BOARD_ARCH="ARM64"
             export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-elf-}"
-            KERNEL_BUILD="$KERNEL_DIR/build"
+            KERNEL_BUILD="$BUILD_OUT/kernel_arm64"
             KERNEL_TEMPLATE="arm64-rpi4"
-            L4RE_BUILD="$PROJ_ROOT/l4re/build_arm64"
+            L4RE_BUILD="$BUILD_OUT/l4re_arm64"
             L4RE_TEMPLATE="arm64-rv-v8a"
             QEMU_CMD="qemu-system-aarch64"
             ;;
@@ -59,11 +79,27 @@ setup_board() {
             if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
                 export PATH="$_arm_brew_prefix/bin:$PATH"
             fi
-            KERNEL_BUILD="$KERNEL_DIR/build_bbb"
+            KERNEL_BUILD="$BUILD_OUT/kernel_arm"
             KERNEL_TEMPLATE="arm-omap3-am33xx"
-            L4RE_BUILD="$PROJ_ROOT/l4re/build_arm"
+            L4RE_BUILD="$BUILD_OUT/l4re_arm"
             L4RE_TEMPLATE="arm-omap3-am33xx"
             QEMU_CMD=""  # AM335x 无 QEMU 支持
+            ;;
+        virt)
+            BOARD_NAME="QEMU ARM Virt (Cortex-A15)"
+            BOARD_ARCH="ARM"
+            export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
+            # macOS: brew 安装的工具链不在默认 PATH 中
+            local _arm_brew_prefix
+            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null)"
+            if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
+                export PATH="$_arm_brew_prefix/bin:$PATH"
+            fi
+            KERNEL_BUILD="$BUILD_OUT/kernel_virt"
+            KERNEL_TEMPLATE="arm-virt-pl1"
+            L4RE_BUILD="$BUILD_OUT/l4re_virt"
+            L4RE_TEMPLATE="arm-virt-v7a"
+            QEMU_CMD="qemu-system-arm -M virt -cpu cortex-a15"
             ;;
         *)
             error "未知目标板: $board
@@ -163,19 +199,17 @@ build_kernel() {
 
     if [ "$need_rebuild" -eq 1 ]; then
         rm -rf "$KERNEL_BUILD"
+        mkdir -p "$(dirname "$KERNEL_BUILD")"
         info "创建内核构建目录 (模板: $KERNEL_TEMPLATE)..."
-        $MAKE BUILDDIR="$(basename "$KERNEL_BUILD")" T="$KERNEL_TEMPLATE"
+        $MAKE BUILDDIR="$KERNEL_BUILD" T="$KERNEL_TEMPLATE"
     fi
 
     # 编译内核
     info "编译内核..."
     $MAKE -C "$KERNEL_BUILD" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 
-    # 复制内核二进制到输出目录
-    mkdir -p "$BUILD_OUT/kernel"
     if [ -f "$KERNEL_BUILD/fiasco" ]; then
-        cp "$KERNEL_BUILD/fiasco" "$BUILD_OUT/kernel/"
-        info "内核已编译: $BUILD_OUT/kernel/fiasco"
+        info "内核已编译: $KERNEL_BUILD/fiasco"
     else
         error "内核编译失败: 找不到 fiasco 二进制文件"
     fi
@@ -199,13 +233,17 @@ build_l4re() {
         ln -s ../../pkg/drivers "$l4mk_pkg/drivers"
         info "创建符号链接: l4mk/pkg/drivers -> ../../pkg/drivers"
     fi
+    if [ ! -e "$l4mk_pkg/library" ]; then
+        ln -s ../../pkg/library "$l4mk_pkg/library"
+        info "创建符号链接: l4mk/pkg/library -> ../../pkg/library"
+    fi
 
     # project.mk 的 find 命令不会跟随符号链接来发现 prj-config/aliases.d,
     # 需要将各子项目的别名文件合并到 l4mk/mk/aliases.d/ (该目录已在搜索路径中).
     # 多个包可能有同名的别名文件 (如 05-compiler-rt), 需要合并而非覆盖
     local aliases_dst="$PROJ_ROOT/l4mk/mk/aliases.d"
     local alias_dirs
-    alias_dirs=$(find "$PROJ_ROOT/l4re" "$PROJ_ROOT/pkg/drivers" \
+    alias_dirs=$(find "$PROJ_ROOT/l4re" "$PROJ_ROOT/pkg/drivers" "$PROJ_ROOT/pkg/library" \
                  -maxdepth 4 -type d -name aliases.d \
                  -path "*/prj-config/aliases.d" 2>/dev/null || true)
     local aliases_changed=0
@@ -289,6 +327,15 @@ ifneq ($(patsubst $(_PRJ)/pkg/drivers/%,,$(CURDIR)),$(CURDIR))
   PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
 endif
 
+# pkg/library/<pkg>/ → l4mk/pkg/library/<pkg>/
+ifneq ($(patsubst $(_PRJ)/pkg/library/%,,$(CURDIR)),$(CURDIR))
+  _REL := $(patsubst $(_PRJ)/pkg/library/%,%,$(CURDIR))
+  SRC_DIR    := $(_L4_ABS)/pkg/library/$(_REL)
+  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
+  OBJ_DIR    := $(OBJ_BASE)/pkg/library/$(_REL)
+  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
+endif
+
 endif
 endif
 MAKECONF_EOF
@@ -297,14 +344,15 @@ MAKECONF_EOF
 
     if [ ! -d "$L4RE_BUILD" ]; then
         info "创建 L4Re 构建目录 (模板: $L4RE_TEMPLATE)..."
-        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T="$L4RE_TEMPLATE"
+        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T="$L4RE_TEMPLATE" CROSS_COMPILE="${CROSS_COMPILE}"
     fi
 
     cd "$L4RE_BUILD"
     # 传递绝对 L4DIR 以避免符号链接解析导致的相对路径错误:
     # 包的 Makefile 使用 L4DIR ?= $(PKGDIR)/../../.. 来定位构建系统,
     # 但 make -C 会解析符号链接, 导致相对路径失效
-    $MAKE L4DIR="$l4mk_dir" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    # 同时传递 CROSS_COMPILE 确保编译器一致性
+    $MAKE L4DIR="$l4mk_dir" CROSS_COMPILE="${CROSS_COMPILE}" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
     info "L4Re 构建完成"
 }
 
@@ -318,12 +366,12 @@ build_bootstrap() {
         error "L4Re 构建目录不存在，请先构建 L4Re"
     fi
 
-    if [ ! -f "$BUILD_OUT/kernel/fiasco" ]; then
+    if [ ! -f "$KERNEL_BUILD/fiasco" ]; then
         error "内核尚未编译，请先构建内核"
     fi
 
-    # 设置模块搜索路径: 内核输出 + 配置文件
-    export MODULE_SEARCH_PATH="$BUILD_OUT/kernel:$CONF_DIR"
+    # 设置模块搜索路径: 内核构建目录 + 配置文件
+    export MODULE_SEARCH_PATH="$KERNEL_BUILD:$CONF_DIR"
 
     cd "$L4RE_BUILD"
     $MAKE E=fiasco-base-test elfimage
@@ -359,10 +407,124 @@ do_clean() {
     fi
 
     # 清理输出目录
-    rm -rf "$BUILD_OUT/kernel/fiasco"
     rm -f "$BUILD_OUT/bootstrap.elf"
 
     info "清理完成"
+}
+
+# ============================================================
+# 收集构建产物
+# ============================================================
+collect_artifacts() {
+    info "收集构建产物到 $BUILD_OUT/artifacts/..."
+
+    local artifacts_dir="$BUILD_OUT/artifacts"
+    mkdir -p "$artifacts_dir"
+
+    # 收集内核
+    if [ -f "$KERNEL_BUILD/fiasco" ]; then
+        cp "$KERNEL_BUILD/fiasco" "$artifacts_dir/fiasco-${BOARD}"
+        info "✓ 内核: fiasco-${BOARD}"
+    fi
+
+    # 收集 bootstrap
+    local bootstrap_dir="$L4RE_BUILD/bin/arm_armv7a/plain"
+    if [ "$BOARD" = "rpi4" ]; then
+        bootstrap_dir="$L4RE_BUILD/bin/arm_armv8a/plain"
+    fi
+
+    if [ -f "$bootstrap_dir/bootstrap.elf" ]; then
+        cp "$bootstrap_dir/bootstrap.elf" "$artifacts_dir/bootstrap-${BOARD}.elf"
+        info "✓ Bootstrap ELF: bootstrap-${BOARD}.elf"
+    fi
+
+    if [ -f "$bootstrap_dir/bootstrap.raw" ] || [ -L "$bootstrap_dir/bootstrap.raw" ]; then
+        cp -L "$bootstrap_dir/bootstrap.raw" "$artifacts_dir/bootstrap-${BOARD}.raw" 2>/dev/null || true
+        info "✓ Bootstrap RAW: bootstrap-${BOARD}.raw"
+    fi
+
+    # 收集完整的引导镜像（需要先运行 build_bootstrap）
+    if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
+        cp "$L4RE_BUILD/images/bootstrap.elf" "$artifacts_dir/bootstrap-image-${BOARD}.elf"
+        info "✓ Bootstrap 完整镜像: bootstrap-image-${BOARD}.elf"
+    else
+        warn "✗ Bootstrap 完整镜像未找到 (需要运行: ./build.sh --board ${BOARD} bootstrap)"
+    fi
+
+    # 收集 build 根目录下的 bootstrap.elf（如果存在）
+    if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
+        cp "$BUILD_OUT/bootstrap.elf" "$artifacts_dir/bootstrap-final-${BOARD}.elf"
+        info "✓ 最终引导镜像: bootstrap-final-${BOARD}.elf"
+    fi
+
+    # 创建说明文件
+    cat > "$artifacts_dir/README.md" << EOF
+# TuringOS 构建产物
+
+构建时间: $(date)
+目标板: $BOARD_NAME ($BOARD_ARCH)
+交叉编译器: ${CROSS_COMPILE}gcc
+
+## 文件列表
+
+### 内核
+EOF
+
+    if [ -f "$artifacts_dir/fiasco-${BOARD}" ]; then
+        echo "- \`fiasco-${BOARD}\` - Fiasco 微内核" >> "$artifacts_dir/README.md"
+    fi
+
+    cat >> "$artifacts_dir/README.md" << EOF
+
+### Bootstrap
+EOF
+
+    if [ -f "$artifacts_dir/bootstrap-${BOARD}.elf" ]; then
+        echo "- \`bootstrap-${BOARD}.elf\` - Bootstrap 引导加载器 (ELF 格式)" >> "$artifacts_dir/README.md"
+    fi
+    if [ -f "$artifacts_dir/bootstrap-${BOARD}.raw" ]; then
+        echo "- \`bootstrap-${BOARD}.raw\` - Bootstrap 引导加载器 (RAW 二进制格式)" >> "$artifacts_dir/README.md"
+    fi
+    if [ -f "$artifacts_dir/bootstrap-image-${BOARD}.elf" ]; then
+        echo "- \`bootstrap-image-${BOARD}.elf\` - 包含所有模块的完整引导镜像" >> "$artifacts_dir/README.md"
+    fi
+    if [ -f "$artifacts_dir/bootstrap-final-${BOARD}.elf" ]; then
+        echo "- \`bootstrap-final-${BOARD}.elf\` - 最终引导镜像（包含内核和模块）" >> "$artifacts_dir/README.md"
+    fi
+
+    cat >> "$artifacts_dir/README.md" << EOF
+
+## 使用方法
+
+### BeagleBone Black (AM335x)
+1. 将 SD 卡格式化为 FAT32
+2. 复制 \`bootstrap-${BOARD}.raw\` 到 SD 卡
+3. 通过 U-Boot 加载:
+   \`\`\`
+   fatload mmc 0 0x80000000 bootstrap-${BOARD}.raw
+   go 0x80000000
+   \`\`\`
+
+### Raspberry Pi 4
+1. 准备 SD 卡并安装固件
+2. 复制 \`bootstrap-${BOARD}.elf\` 到 boot 分区
+3. 配置 config.txt 使用该内核
+
+## 生成完整镜像
+
+如果需要包含所有模块的完整引导镜像，请运行：
+\`\`\`bash
+./build.sh --board ${BOARD} bootstrap
+\`\`\`
+
+这将生成 \`bootstrap-image-${BOARD}.elf\` 和 \`bootstrap-final-${BOARD}.elf\`
+
+---
+自动生成于 $(date +"%Y-%m-%d %H:%M:%S")
+EOF
+
+    info "构建产物已收集到: $artifacts_dir"
+    ls -lh "$artifacts_dir"
 }
 
 # ============================================================
@@ -455,20 +617,27 @@ main() {
             build_kernel
             build_l4re
             build_bootstrap
+            collect_artifacts
             ;;
         kernel)
             check_deps
             init_submodules
             build_kernel
+            collect_artifacts
             ;;
         l4re)
             check_deps
             check_config
             sync_config_to_l4re
             build_l4re
+            collect_artifacts
             ;;
         bootstrap)
             build_bootstrap
+            collect_artifacts
+            ;;
+        collect)
+            collect_artifacts
             ;;
         menuconfig)
             do_menuconfig
@@ -489,17 +658,19 @@ main() {
 }
 
 show_usage() {
-    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|menuconfig|defconfig|clean}"
+    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|menuconfig|defconfig|clean}"
     echo ""
     echo "目标板 (--board):"
     echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
     echo "  bbb         BeagleBone Black, AM335x ARM"
+    echo "  virt        QEMU ARM Virt (Cortex-A15)"
     echo ""
     echo "构建目标:"
-    echo "  all         完整构建 (内核 + L4Re + 引导镜像)"
+    echo "  all         完整构建 (内核 + L4Re + 引导镜像 + 收集产物)"
     echo "  kernel      仅构建 Fiasco 内核"
     echo "  l4re        仅构建 L4Re 运行时"
     echo "  bootstrap   仅生成引导镜像 (需先完成 kernel 和 l4re)"
+    echo "  collect     收集构建产物到 build/artifacts 目录"
     echo "  menuconfig  交互式驱动配置菜单"
     echo "  defconfig   使用默认驱动配置"
     echo "  clean       清理所有构建产物"
@@ -508,9 +679,12 @@ show_usage() {
     echo "  $0                       # 默认 RPi4 全量构建"
     echo "  $0 --board bbb l4re      # 为 BBB 构建 L4Re"
     echo "  $0 --board bbb all       # BBB 全量构建"
+    echo "  $0 --board bbb collect   # 仅收集 BBB 构建产物"
     echo ""
     echo "环境变量:"
     echo "  CROSS_COMPILE  交叉编译器前缀 (会根据 --board 自动设置)"
+    echo ""
+    echo "构建产物将收集到: build/artifacts/"
 }
 
 main "$@"

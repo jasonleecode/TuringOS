@@ -5,6 +5,7 @@
 #include <l4/sys/factory>
 #include <l4/sys/cxx/ipc_types>
 #include <l4/sys/cxx/ipc_epiface>
+#include <l4/re/error_helper>
 #include <l4/re/util/object_registry>
 #include <l4/re/util/br_manager>
 
