@@ -373,8 +373,13 @@ build_bootstrap() {
     # 设置模块搜索路径: 内核构建目录 + 配置文件
     export MODULE_SEARCH_PATH="$KERNEL_BUILD:$CONF_DIR"
 
+    # 选择启动入口 (可通过环境变量 ENTRY 覆盖)
+    # 可用入口: fiasco-base-test, shell, demo
+    local entry="${ENTRY:-demo}"
+    info "使用启动入口: $entry"
+
     cd "$L4RE_BUILD"
-    $MAKE E=fiasco-base-test elfimage
+    $MAKE E="$entry" elfimage
 
     # 复制引导镜像到输出目录
     if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
