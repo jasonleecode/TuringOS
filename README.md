@@ -2,6 +2,9 @@
 
 基于 [Fiasco](https://l4re.org/) 微内核构建的操作系统。Fiasco 是一个 L4 家族的微内核，TuringOS 在其之上通过 L4Re 运行时环境提供驱动和应用程序支持。
 
+<img width="731" height="837" alt="1770173627060" src="https://github.com/user-attachments/assets/edbfe07f-9838-4da2-aceb-39474c17de3c" />
+
+
 ## 目录结构
 
 ```
