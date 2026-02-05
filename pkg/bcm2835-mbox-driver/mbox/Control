@@ -1,0 +1,2 @@
+requires: libio-vbus drivers-frst libstdc++ lua++ libmbox-bcm2835
+maintainer: frank.mehnert@kernkonzept.com

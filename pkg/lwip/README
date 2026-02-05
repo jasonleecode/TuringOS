@@ -1,0 +1,13 @@
+git://git.savannah.nongnu.org/lwip.git
+4599f551dead9eac233b91c0b9ee5879f5d0620a
+
+Upgrade procedure: Make sure to preserve the L4 changes in the lwIP source code.
+They are clearly marked using "L4" in preprocessor conditions or comments. The
+L4 changes currently consist of:
+
+  - include/lwip/arch.h: LITTLE_ENDIAN/BIG_ENDIAN clash with uclibc
+  - api/netdb.c, apps/ping/ping.c: Add missing LWIP_SOCKET_HAVE_SA_LEN checks
+  - api/sockets.c: Allow sizeof(struct sockaddr_storage) (needed for uclibc)
+  - contrib/ports/unix: Checks for L4Re
+  - include/lwip/sockets.h, api/sockets.c: Support for system-wide select(),
+    poll(), etc.

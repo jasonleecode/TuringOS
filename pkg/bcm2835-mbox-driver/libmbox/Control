@@ -1,0 +1,3 @@
+provides: libmbox-bcm2835
+requires: libio-vbus stdlibs-all
+maintainer: frank.mehnert@kernkonzept.com

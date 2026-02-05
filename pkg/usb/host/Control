@@ -1,0 +1,2 @@
+requires: libstdc++ libio stdlibs
+provides: usb

@@ -1,0 +1,15 @@
+
+entry usb-fb-mag-example
+roottask moe rom/usb.ned
+module l4re
+module ned
+module io
+module usb-drv
+module fb-drv
+module hid-drv
+module mag
+module ned/usb/usb.ned
+module io/usb.io
+module io/x86-legacy.devs
+# Grr
+module[perl] "$ENV{SRC_BASE_ABS}/conf/examples/x86-fb.io"

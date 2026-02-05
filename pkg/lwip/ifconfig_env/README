@@ -1,0 +1,16 @@
+lwIP ifconfig_env
+=================
+The lwip_ifconfig_env library allows configuring a static IPv4 address
+(including network prefix and gateway) or DHCP without modifying the network
+application. It is linked as an additional library and the configuration is
+specified using environment variables, e.g.:
+
+    IFCONFIG_IP4_<iface>="192.168.42.2/24 via 192.168.42.1"
+    IFCONFIG_IP4_<iface>="dhcp"
+
+The network interface is configured early as part of static constructor
+initialization. Note that the library currently does not wait for DHCP
+configuration to finish, so a network client application may fail if it does
+not wait until it has obtained an IP address. For network server applications
+it usually does not matter when the IP is assigned - they bind to a port and
+then just wait for incoming requests.

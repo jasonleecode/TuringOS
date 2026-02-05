@@ -1,0 +1,36 @@
+## This file states the license of this package and possibly its subpackages
+## in machine and human readable format. The PackageName refers to the package
+## whose license is defined by PackageLicenseConcluded.
+## For more information about this file format visit the SPDX website at
+## https://spdx.org
+
+SPDXVersion: SPDX-2.3
+DataLicense: CC0-1.0
+SPDXID: SPDXRef-DOCUMENT
+DocumentNamespace: spdx:l4re/lwip-f16d4a1f-7fa9-4125-92b2-cc8cd7c5b42c
+DocumentName: lwip
+Creator: Organization: L4Re, info@l4re.org
+Created: 2025-03-30T00:00:00Z
+
+## Package Information
+PackageName: lwip
+SPDXID: SPDXRef-lwip
+PackageOriginator: Organization: L4Re
+PackageLicenseDeclared: BSD 3-clause
+PackageLicenseConcluded: BSD 3-clause
+FilesAnalyzed: false
+PackageCopyrightText: NOASSERTION
+PackageDownloadLocation: NOASSERTION
+
+PackageName: lwip
+SPDXID: SPDXRef-lwip-contrib
+PackageFileName: ./lib
+PackageOriginator: lwIP project
+PackageLicenseDeclared: BSD 3-clause
+PackageLicenseConcluded: BSD 3-clause
+FilesAnalyzed: false
+PackageCopyrightText: NOASSERTION
+PackageDownloadLocation: NOASSERTION
+
+## Relationships
+Relationship: SPDXRef-lwip CONTAINS SPDXRef-lwip-contrib

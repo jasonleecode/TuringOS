@@ -1,0 +1,26 @@
+## This file states the license of this package and possibly its subpackages
+## in machine and human readable format. The PackageName refers to the package
+## whose license is defined by PackageLicenseConcluded.
+## For more information about this file format visit the SPDX website at
+## https://spdx.org
+
+SPDXVersion: SPDX-2.3
+DataLicense: CC0-1.0
+SPDXID: SPDXRef-DOCUMENT
+DocumentNamespace: spdx:l4re/usb-6e23ac44-3e6a-43f9-902b-6e0bf3e0c345
+DocumentName: usb
+Creator: Organization: L4Re Project (info@l4re.org)
+Created: 2025-02-20T00:00:00Z
+
+## Package Information
+PackageName: usb
+SPDXID: SPDXRef-usb
+PackageOriginator: Organization: L4Re Project (info@l4re.org)
+PackageLicenseDeclared: MIT
+PackageLicenseConcluded: MIT
+FilesAnalyzed: false
+PackageCopyrightText: NOASSERTION
+PackageDownloadLocation: NOASSERTION
+
+## Relationships
+Relationship: SPDXRef-DOCUMENT DESCRIBES SPDXRef-usb
