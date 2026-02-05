@@ -10,39 +10,39 @@ mainmenu "TuringOS Driver Configuration"
 
 comment "--- Core Components ---"
 
-source "pkg/drivers/bootstrap/Kconfig.turingos"
+source "pkg/bootstrap/Kconfig.turingos"
 
-source "pkg/drivers/cons/Kconfig.L4"
+source "pkg/cons/Kconfig.L4"
 
-source "pkg/drivers/drivers-frst/Kconfig.L4"
+source "pkg/drivers-frst/Kconfig.L4"
 
-source "pkg/drivers/tinit/Kconfig.L4"
+source "pkg/tinit/Kconfig.L4"
 
 comment "--- Storage Drivers ---"
 
-source "pkg/drivers/emmc-driver/Kconfig.L4"
+source "pkg/emmc-driver/Kconfig.L4"
 
 comment "--- Bus & Peripheral Drivers ---"
 
-source "pkg/drivers/i2c-driver/Kconfig.L4"
+source "pkg/i2c-driver/Kconfig.L4"
 
-source "pkg/drivers/spi-driver/Kconfig.L4"
+source "pkg/spi-driver/Kconfig.L4"
 
-source "pkg/drivers/io/Kconfig.turingos"
+source "pkg/io/Kconfig.turingos"
 
-source "pkg/drivers/rtc/Kconfig.L4"
+source "pkg/rtc/Kconfig.L4"
 
 comment "--- Device Drivers ---"
 
-source "pkg/devices/ssd1306/Kconfig.L4"
+source "pkg/ssd1306/Kconfig.L4"
 
 comment "--- Virtualization ---"
 
-source "pkg/drivers/uvmm/Kconfig.L4"
+source "pkg/uvmm/Kconfig.L4"
 
-source "pkg/drivers/tvmm/Kconfig.L4"
+source "pkg/tvmm/Kconfig.L4"
 
-source "pkg/drivers/virtio-net-switch/Kconfig.L4"
+source "pkg/virtio-net-switch/Kconfig.L4"
 
 comment "--- Packages without detailed Kconfig ---"
 

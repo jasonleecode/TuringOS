@@ -244,10 +244,10 @@ struct Am335x_rtc : Rtc
 
 private:
   l4_uint32_t read32(unsigned reg)
-  { return (*_regs).read<l4_uint32_t>(reg); }
+  { return _regs->read<l4_uint32_t>(reg); }
 
   void write32(unsigned reg, l4_uint32_t val)
-  { (*_regs).write<l4_uint32_t>(val, reg); }
+  { _regs->write<l4_uint32_t>(val, reg); }
 
   void unlock()
   {
@@ -271,7 +271,7 @@ private:
       }
   }
 
-  L4drivers::Register_block<32> _regs;
+  L4drivers::Mmio_register_block<32> *_regs = nullptr;
 };
 
 static Am335x_rtc _am335x_rtc;

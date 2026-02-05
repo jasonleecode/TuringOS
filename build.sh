@@ -224,28 +224,28 @@ build_l4re() {
 
     local l4mk_dir="$PROJ_ROOT/l4mk"
 
-    # 在 l4mk/pkg/ 下创建指向 l4re-core 和 drivers 的符号链接
+    # 在 l4mk/pkg/ 下创建指向 l4re-core 和 pkg/ 下各包的符号链接
     local l4mk_pkg="$PROJ_ROOT/l4mk/pkg"
     if [ ! -e "$l4mk_pkg/l4re-core" ]; then
         ln -s ../../l4re "$l4mk_pkg/l4re-core"
         info "创建符号链接: l4mk/pkg/l4re-core -> ../../l4re"
     fi
-    if [ ! -e "$l4mk_pkg/drivers" ]; then
-        ln -s ../../pkg/drivers "$l4mk_pkg/drivers"
-        info "创建符号链接: l4mk/pkg/drivers -> ../../pkg/drivers"
-    fi
-    if [ ! -e "$l4mk_pkg/library" ]; then
-        ln -s ../../pkg/library "$l4mk_pkg/library"
-        info "创建符号链接: l4mk/pkg/library -> ../../pkg/library"
-    fi
+    # 为 pkg/ 下每个包逐个创建符号链接
+    for pkg_dir in "$PROJ_ROOT"/pkg/*/; do
+        local pkg_name="$(basename "$pkg_dir")"
+        if [ ! -e "$l4mk_pkg/$pkg_name" ]; then
+            ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
+            info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
+        fi
+    done
 
     # project.mk 的 find 命令不会跟随符号链接来发现 prj-config/aliases.d,
     # 需要将各子项目的别名文件合并到 l4mk/mk/aliases.d/ (该目录已在搜索路径中).
     # 多个包可能有同名的别名文件 (如 05-compiler-rt), 需要合并而非覆盖
     local aliases_dst="$PROJ_ROOT/l4mk/mk/aliases.d"
     local alias_dirs
-    alias_dirs=$(find "$PROJ_ROOT/l4re" "$PROJ_ROOT/pkg/drivers" "$PROJ_ROOT/pkg/library" \
-                 -maxdepth 4 -type d -name aliases.d \
+    alias_dirs=$(find "$PROJ_ROOT/l4re" "$PROJ_ROOT/pkg" \
+                 -maxdepth 5 -type d -name aliases.d \
                  -path "*/prj-config/aliases.d" 2>/dev/null || true)
     local aliases_changed=0
     for adir in $alias_dirs; do
@@ -317,42 +317,17 @@ ifneq ($(patsubst $(_PRJ)/l4re/%,,$(CURDIR)),$(CURDIR))
   PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
   OBJ_DIR    := $(OBJ_BASE)/pkg/l4re-core/$(_REL)
   PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
+  L4DIR      := $(_L4_ABS)
 endif
 
-# pkg/drivers/<pkg>/ → l4mk/pkg/drivers/<pkg>/
-ifneq ($(patsubst $(_PRJ)/pkg/drivers/%,,$(CURDIR)),$(CURDIR))
-  _REL := $(patsubst $(_PRJ)/pkg/drivers/%,%,$(CURDIR))
-  SRC_DIR    := $(_L4_ABS)/pkg/drivers/$(_REL)
+# pkg/<name>/... → l4mk/pkg/<name>/...
+ifneq ($(patsubst $(_PRJ)/pkg/%,,$(CURDIR)),$(CURDIR))
+  _REL := $(patsubst $(_PRJ)/pkg/%,%,$(CURDIR))
+  SRC_DIR    := $(_L4_ABS)/pkg/$(_REL)
   PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
-  OBJ_DIR    := $(OBJ_BASE)/pkg/drivers/$(_REL)
+  OBJ_DIR    := $(OBJ_BASE)/pkg/$(_REL)
   PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
-endif
-
-# pkg/library/<pkg>/ → l4mk/pkg/library/<pkg>/
-ifneq ($(patsubst $(_PRJ)/pkg/library/%,,$(CURDIR)),$(CURDIR))
-  _REL := $(patsubst $(_PRJ)/pkg/library/%,%,$(CURDIR))
-  SRC_DIR    := $(_L4_ABS)/pkg/library/$(_REL)
-  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
-  OBJ_DIR    := $(OBJ_BASE)/pkg/library/$(_REL)
-  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
-endif
-
-# pkg/app/<pkg>/ → l4mk/pkg/app/<pkg>/
-ifneq ($(patsubst $(_PRJ)/pkg/app/%,,$(CURDIR)),$(CURDIR))
-  _REL := $(patsubst $(_PRJ)/pkg/app/%,%,$(CURDIR))
-  SRC_DIR    := $(_L4_ABS)/pkg/app/$(_REL)
-  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
-  OBJ_DIR    := $(OBJ_BASE)/pkg/app/$(_REL)
-  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
-endif
-
-# pkg/devices/<pkg>/ → l4mk/pkg/devices/<pkg>/
-ifneq ($(patsubst $(_PRJ)/pkg/devices/%,,$(CURDIR)),$(CURDIR))
-  _REL := $(patsubst $(_PRJ)/pkg/devices/%,%,$(CURDIR))
-  SRC_DIR    := $(_L4_ABS)/pkg/devices/$(_REL)
-  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
-  OBJ_DIR    := $(OBJ_BASE)/pkg/devices/$(_REL)
-  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
+  L4DIR      := $(_L4_ABS)
 endif
 
 endif

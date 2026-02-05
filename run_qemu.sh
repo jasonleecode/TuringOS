@@ -31,35 +31,40 @@ done
 # ============================================================
 # 根据目标板设置路径
 # ============================================================
+ARTIFACTS_DIR="$PROJ_ROOT/build/artifacts"
 case "$BOARD" in
     bbb)
         BOARD_NAME="BeagleBone Black (AM335x)"
-        BUILD_DIR="$PROJ_ROOT/l4re/build_arm"
-        KERNEL_BUILD="$PROJ_ROOT/kernel/build_bbb"
+        BUILD_DIR="$PROJ_ROOT/build/l4re_bbb"
+        KERNEL_BUILD="$PROJ_ROOT/build/kernel_bbb"
         CROSS_COMPILE="arm-linux-gnueabihf-"
+        IMAGE="$ARTIFACTS_DIR/bootstrap-final-bbb.elf"
         ;;
     *)
         BOARD_NAME="Raspberry Pi 4B"
-        BUILD_DIR="$PROJ_ROOT/l4re/build_arm64"
-        KERNEL_BUILD="$PROJ_ROOT/kernel/build"
+        BUILD_DIR="$PROJ_ROOT/build/l4re_arm64"
+        KERNEL_BUILD="$PROJ_ROOT/build/kernel_arm64"
         CROSS_COMPILE="aarch64-elf-"
+        IMAGE="$ARTIFACTS_DIR/bootstrap-final-rpi4.elf"
         ;;
 esac
 
-IMAGES_DIR="$BUILD_DIR/images"
-KCONFIG="$BUILD_DIR/.kconfig"
-
-IMAGE="$IMAGES_DIR/bootstrap_${ENTRY}.elf"
+# 如果 artifacts 目录没有，尝试传统的 images 目录
 if [ ! -f "$IMAGE" ]; then
-    IMAGE="$IMAGES_DIR/bootstrap.elf"
+    IMAGES_DIR="$BUILD_DIR/images"
+    IMAGE="$IMAGES_DIR/bootstrap_${ENTRY}.elf"
+    if [ ! -f "$IMAGE" ]; then
+        IMAGE="$IMAGES_DIR/bootstrap.elf"
+    fi
 fi
 
 if [ ! -f "$IMAGE" ]; then
     echo "Error: 找不到引导镜像"
-    echo "  尝试过: $IMAGES_DIR/bootstrap_${ENTRY}.elf"
-    echo "  尝试过: $IMAGES_DIR/bootstrap.elf"
-    echo "请先运行: ./build.sh${BOARD:+ --board $BOARD} l4re"
-    echo "  然后:   cd $BUILD_DIR && CROSS_COMPILE=${CROSS_COMPILE} make E=$ENTRY elfimage"
+    echo "  尝试过: $ARTIFACTS_DIR/bootstrap-final-${BOARD:-rpi4}.elf"
+    echo "  尝试过: $BUILD_DIR/images/bootstrap_${ENTRY}.elf"
+    echo "  尝试过: $BUILD_DIR/images/bootstrap.elf"
+    echo ""
+    echo "请先运行: ./build.sh${BOARD:+ --board $BOARD}"
     exit 1
 fi
 
@@ -99,7 +104,7 @@ fi
 # 检测平台配置
 echo ""
 echo "[平台] L4Re 配置:"
-PLATFORM_TYPE=$(grep "^CONFIG_PLATFORM_TYPE=" "$KCONFIG" 2>/dev/null | cut -d'"' -f2)
+PLATFORM_TYPE=$(grep "^CONFIG_PLATFORM_TYPE=" "$BUILD_DIR/.kconfig" 2>/dev/null | cut -d'"' -f2)
 RAM_BASE=$(grep "PLATFORM_RAM_BASE" "$BUILD_DIR/.config.all" 2>/dev/null | head -1 | sed 's/.*= *//')
 echo "  PLATFORM_TYPE: ${PLATFORM_TYPE:-unknown}"
 echo "  RAM_BASE:      ${RAM_BASE:-unknown}"
@@ -133,7 +138,6 @@ case "$PLATFORM_TYPE" in
         echo "  rv_vexpress_a15 RAM 起始地址: 0x80000000"
         echo "  QEMU virt RAM 起始地址:      0x40000000"
         echo "  建议: 将 L4Re 重新配置为 arm_virt 平台以使用 QEMU 测试"
-        echo "    cd $BUILD_DIR && CROSS_COMPILE=${CROSS_COMPILE} make oldconfig"
         ;;
     omap3_am33xx)
         echo "[平台] omap3_am33xx (BeagleBone Black / AM335x)"

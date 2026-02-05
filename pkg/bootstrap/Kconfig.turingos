@@ -34,10 +34,10 @@ config BOOTSTRAP_CHECK_MD5
 comment "GZIP/ZLIB decompression not available due to missing zlib package"
 	depends on !HAVE_BIDPC_ZLIB
 
-source "pkg/drivers/bootstrap/server/src/platform/Kconfig.s32z"
+source "pkg/bootstrap/server/src/platform/Kconfig.s32z"
 
-source "pkg/drivers/bootstrap/server/src/platform/Kconfig.s32n"
+source "pkg/bootstrap/server/src/platform/Kconfig.s32n"
 
-source "pkg/drivers/bootstrap/server/src/platform/Kconfig.s32k5"
+source "pkg/bootstrap/server/src/platform/Kconfig.s32k5"
 
 endmenu

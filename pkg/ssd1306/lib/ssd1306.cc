@@ -49,7 +49,7 @@ Ssd1306::Ssd1306(L4::Cap<Spi_device_ops> spi, L4vbus::Gpio_pin dc_pin)
 long Ssd1306::send_cmd(l4_uint8_t cmd)
 {
   _dc.set(0);
-  L4::Ipc::Array<l4_uint8_t const> buf(&cmd, 1);
+  L4::Ipc::Array<l4_uint8_t const> buf(1, &cmd);
   return _spi->write(buf);
 }
 
@@ -67,7 +67,7 @@ long Ssd1306::send_cmd_seq(l4_uint8_t const *cmds, unsigned len)
 long Ssd1306::send_data(l4_uint8_t const *data, unsigned len)
 {
   _dc.set(1);
-  L4::Ipc::Array<l4_uint8_t const> buf(data, len);
+  L4::Ipc::Array<l4_uint8_t const> buf(len, data);
   return _spi->write(buf);
 }
 

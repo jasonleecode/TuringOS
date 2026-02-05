@@ -34,9 +34,9 @@ config L4IO_PCI_SRIOV_MAX_VFS
 
 menu "Device drivers"
 
-source "pkg/drivers/io/io/server/src/drivers/Kconfig.L4"
+source "pkg/io/io/server/src/drivers/Kconfig.L4"
 
-source "pkg/drivers/io/io/server/src/drivers/gpio/Kconfig.L4"
+source "pkg/io/io/server/src/drivers/gpio/Kconfig.L4"
 
 endmenu
 
