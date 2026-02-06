@@ -1,28 +1,63 @@
-# 文件路径: conf/modules.list
-# 定义一个启动项，名字叫 "fiasco-base-test"
-entry fiasco-base-test
+# ============================================================
+# TuringOS 启动模块配置
+# ============================================================
 
-# 1. 挂载内核 (开启串口转义序列 -serial_esc)
+# ------------------------------------------------------------
+# Entry: demo - 默认演示系统 (使用 native_shell)
+# ------------------------------------------------------------
+entry demo
+
+# 内核
 kernel fiasco -serial_esc
 
-# 2. 挂载初始内存管理器 (Sigma0)
+# 初始内存管理器
 module sigma0
 
-# 3. 挂载根任务服务器 (Moe) 并指定它去拉起 ned
-roottask moe rom/ned
+# 根任务服务器，直接启动 native_shell（不通过 ned）
+roottask moe /bin/native_shell
 
-# 4. 挂载必要的 L4Re 基础库和脚本解释器 (Ned)
+# L4Re 核心库和工具 - native_shell 可能需要
 module l4re
-module ned
 
-# 注意：以后你写的 my_driver 和 native_shell 也是加在这个列表后面
+# native_shell 可执行程序
+module native_shell
 
-# 5. 挂载 native_shell 及其依赖库
+# Readline 和 history 库
+module libreadline.so
+
+# ------------------------------------------------------------
+# Entry: native - 直接启动 native_shell (不使用 ned)
+# ------------------------------------------------------------
+entry native
+
+kernel fiasco -serial_esc
+module sigma0
+roottask /bin/native_shell
+module l4re
+
+# native_shell 和依赖库
 module native_shell
 module libreadline.so
-module libhistory.so
-# TuringOS 自定义入口
+
+# ------------------------------------------------------------
+# Entry: fiasco-base-test - 基础测试系统 (启动 hello)
+# ------------------------------------------------------------
 entry fiasco-base-test
-roottask moe --init=rom/hello
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/hello
 module l4re
+module ned
 module hello
+
+# ------------------------------------------------------------
+# Entry: shell - Lua 交互式 shell (通过 ned)
+# ------------------------------------------------------------
+entry shell
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/shell
+module l4re
+module ned
