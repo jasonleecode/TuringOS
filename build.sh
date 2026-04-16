@@ -76,7 +76,7 @@ setup_board() {
             export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
             # macOS: brew 安装的工具链不在默认 PATH 中
             local _arm_brew_prefix
-            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null)"
+            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
             if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
                 export PATH="$_arm_brew_prefix/bin:$PATH"
             fi
@@ -92,7 +92,7 @@ setup_board() {
             export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
             # macOS: brew 安装的工具链不在默认 PATH 中
             local _arm_brew_prefix
-            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null)"
+            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
             if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
                 export PATH="$_arm_brew_prefix/bin:$PATH"
             fi

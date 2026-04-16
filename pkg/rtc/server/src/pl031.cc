@@ -6,7 +6,7 @@
  */
 
 /*
- * Simplistic driver for the pl031 RTC. Does not support write.
+ * Driver for the pl031 RTC. Supports read and write.
  */
 
 #include <l4/re/env>
@@ -77,8 +77,12 @@ struct Pl031_rtc : Rtc
     return true;
   };
 
-  int set_time(l4_uint64_t /* offset */)
+  int set_time(l4_uint64_t nsec_offset_1970)
   {
+    /* nsec_offset_1970 = desired_realtime_ns - current_uptime_ns
+     * Recover absolute realtime and write seconds to RTCLR (register 2). */
+    l4_uint64_t realtime_ns = nsec_offset_1970 + l4_kip_clock_ns(l4re_kip());
+    _regs[2] = (l4_uint32_t)(realtime_ns / 1000000000ULL);
     return 0;
   }
 

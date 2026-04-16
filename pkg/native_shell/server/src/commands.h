@@ -12,11 +12,25 @@ struct shell_cmd {
 extern struct shell_cmd commands[];
 extern int num_commands;
 
+/* built-in commands */
 void cmd_help(int argc, char **argv);
 void cmd_echo(int argc, char **argv);
 void cmd_info(int argc, char **argv);
 void cmd_clear(int argc, char **argv);
 void cmd_history(int argc, char **argv);
 void cmd_exit(int argc, char **argv);
+
+/* filesystem commands */
+void cmd_pwd(int argc, char **argv);
+void cmd_cd(int argc, char **argv);
+void cmd_ls(int argc, char **argv);
+void cmd_cat(int argc, char **argv);
+void cmd_mkdir(int argc, char **argv);
+void cmd_rm(int argc, char **argv);
+
+/* system commands */
+void cmd_uname(int argc, char **argv);
+void cmd_env(int argc, char **argv);
+void cmd_date(int argc, char **argv);
 
 #endif
