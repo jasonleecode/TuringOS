@@ -1,0 +1,2 @@
+requires: stdlibs libstdc++ libio-vbus l4util
+provides: ds18b20
