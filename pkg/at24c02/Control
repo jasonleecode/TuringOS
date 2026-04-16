@@ -1,0 +1,2 @@
+requires: stdlibs libstdc++ i2c-server
+provides: at24c02
