@@ -8,11 +8,15 @@ echo "=========================================="
 PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # ---- 命令行参数解析 ----
-NET_MODE=""    # "" = 无网络, "shell" = net-shell 模式
-HOST_PORT=5555 # 主机侧端口，转发到 guest:5000
+NET_MODE="shell" # 默认启用网络
+HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --no-net)
+            NET_MODE=""
+            shift
+            ;;
         --net-shell)
             NET_MODE="shell"
             shift
@@ -26,13 +30,14 @@ while [[ $# -gt 0 ]]; do
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  --net-shell       启用网络，在 shell 中输入 'net' 启动 TCP echo server"
+            echo "  --no-net          禁用网络"
+            echo "  --net-shell       启用网络 (默认已启用)"
             echo "  --host-port PORT  主机转发端口 (默认 5555)"
             echo ""
             echo "示例:"
-            echo "  $0                     # 无网络，标准启动"
-            echo "  $0 --net-shell         # 带网络的 shell"
-            echo "  $0 --net-shell --host-port 8080"
+            echo "  $0                     # 带网络启动 (默认)"
+            echo "  $0 --no-net            # 不带网络启动"
+            echo "  $0 --host-port 8080    # 自定义转发端口"
             echo ""
             echo "TCP server 测试:"
             echo "  1. 先构建: make -C build/l4re_virt PKGS=native_shell"
