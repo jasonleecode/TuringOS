@@ -106,7 +106,7 @@ def run_test(host: str, port: int, rounds: int) -> bool:
             print(f"  Round {i}: FAIL – sent {payload!r}, got {echo!r}")
             failed += 1
 
-        time.sleep(0.1)
+        time.sleep(0.01)
 
     sock.close()
 
