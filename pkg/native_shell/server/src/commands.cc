@@ -1,17 +1,22 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <errno.h>
-#include <time.h>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cerrno>
+#include <ctime>
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/stat.h>
 #include <readline/history.h>
-#include <l4/re/env.h>
+
+#include <l4/re/env>
 #include <l4/rtc/rtc.h>
+#include <l4/vbus/vbus>
+#include <l4/vbus/vbus_gpio>
+#include <l4/ds18b20/ds18b20.h>
+
 #include "commands.h"
 
-struct shell_cmd commands[] = {
+shell_cmd commands[] = {
     /* general */
     { "help",    "List available commands",              cmd_help    },
     { "echo",    "Print arguments  [-n: no newline]",   cmd_echo    },
@@ -138,14 +143,12 @@ void cmd_ls(int argc, char **argv)
         return;
     }
     struct dirent *entry;
-    while ((entry = readdir(dir)) != NULL) {
-        /* skip . and .. */
+    while ((entry = readdir(dir)) != nullptr) {
         if (entry->d_name[0] == '.' &&
             (entry->d_name[1] == '\0' ||
              (entry->d_name[1] == '.' && entry->d_name[2] == '\0')))
             continue;
 
-        /* append '/' for directories when we can stat */
         char full[4096];
         struct stat st;
         snprintf(full, sizeof(full), "%s/%s", path, entry->d_name);
@@ -235,17 +238,15 @@ void cmd_env(int argc, char **argv)
         printf("%s\n", *e);
 }
 
-/* Portable UTC broken-down time -> Unix timestamp (avoids timegm dependency) */
 static time_t utc_mktime(int y, int mo, int d, int h, int mi, int s)
 {
     static const int mdays[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
-    int is_leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
-    int years   = y - 1970;
-    /* Leap days between 1970 and start of year y */
-    long leap   = (years + 1) / 4 - (years + 1) / 100 + (years + 1) / 400;
-    long days   = (long)years * 365 + leap
-                  + mdays[mo - 1] + (mo > 2 && is_leap ? 1 : 0) + d - 1;
-    return (time_t)(days * 86400L + h * 3600 + mi * 60 + s);
+    int  is_leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+    int  years   = y - 1970;
+    long leap    = (years + 1) / 4 - (years + 1) / 100 + (years + 1) / 400;
+    long days    = static_cast<long>(years) * 365 + leap
+                   + mdays[mo - 1] + (mo > 2 && is_leap ? 1 : 0) + d - 1;
+    return static_cast<time_t>(days * 86400L + h * 3600 + mi * 60 + s);
 }
 
 void cmd_date(int argc, char **argv)
@@ -253,7 +254,6 @@ void cmd_date(int argc, char **argv)
     struct timespec mono, real;
     char buf[64];
 
-    /* ---- date -s "YYYY-MM-DD HH:MM:SS" ---- */
     if (argc >= 3 && strcmp(argv[1], "-s") == 0) {
         int y, mo, d, h, mi, s;
         if (sscanf(argv[2], "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &s) != 6
@@ -271,11 +271,10 @@ void cmd_date(int argc, char **argv)
 
         time_t t = utc_mktime(y, mo, d, h, mi, s);
 
-        /* offset = desired_realtime_ns - current_uptime_ns */
         clock_gettime(CLOCK_MONOTONIC, &mono);
-        l4_uint64_t uptime_ns  = (l4_uint64_t)mono.tv_sec * 1000000000ULL
-                                 + (l4_uint64_t)mono.tv_nsec;
-        l4_uint64_t new_offset = (l4_uint64_t)t * 1000000000ULL - uptime_ns;
+        l4_uint64_t uptime_ns  = static_cast<l4_uint64_t>(mono.tv_sec) * 1000000000ULL
+                                 + static_cast<l4_uint64_t>(mono.tv_nsec);
+        l4_uint64_t new_offset = static_cast<l4_uint64_t>(t) * 1000000000ULL - uptime_ns;
 
         if (l4rtc_set_offset_to_realtime(rtc_cap, new_offset) == 0) {
             struct tm *tm = gmtime(&t);
@@ -287,11 +286,9 @@ void cmd_date(int argc, char **argv)
         return;
     }
 
-    /* ---- display current time ---- */
     clock_gettime(CLOCK_MONOTONIC, &mono);
     clock_gettime(CLOCK_REALTIME,  &real);
 
-    /* Jan 1 2000 = 946684800 — anything above means RTC is valid */
     if (real.tv_sec > 946684800L) {
         struct tm *tm = gmtime(&real.tv_sec);
         strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", tm);
@@ -310,15 +307,35 @@ void cmd_date(int argc, char **argv)
 
 void cmd_temp(int argc, char **argv)
 {
-    int pin = 4; /* default GPIO pin, same as ds18b20 example */
+    int pin = 4;
     if (argc >= 2)
         pin = atoi(argv[1]);
 
-    int temp_c100;
-    if (ds18b20_read_temp(pin, &temp_c100) != 0)
+    auto vbus = L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus");
+    if (!vbus) {
+        printf("temp: 'vbus' capability not available\n");
         return;
+    }
 
-    int neg   = (temp_c100 < 0);
-    int abs_v = neg ? -temp_c100 : temp_c100;
+    L4vbus::Device gpio_dev;
+    if (vbus->root().device_by_hid(&gpio_dev, "gpio") < 0) {
+        printf("temp: GPIO device not found on vbus\n");
+        return;
+    }
+
+    Ds18b20 sensor(L4vbus::Gpio_pin(gpio_dev, pin));
+    if (!sensor.present()) {
+        printf("temp: no device on GPIO pin %d\n", pin);
+        return;
+    }
+
+    int temp_c100;
+    if (sensor.read_temp_c100(&temp_c100) != L4_EOK) {
+        printf("temp: read failed\n");
+        return;
+    }
+
+    bool neg   = temp_c100 < 0;
+    int  abs_v = neg ? -temp_c100 : temp_c100;
     printf("%s%d.%02d °C\n", neg ? "-" : "", abs_v / 100, abs_v % 100);
 }
