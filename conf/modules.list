@@ -61,3 +61,18 @@ module sigma0
 roottask moe rom/shell
 module l4re
 module ned
+
+# ------------------------------------------------------------
+# Entry: tcp-server - TCP echo server (virtio-net + lwIP)
+# ------------------------------------------------------------
+entry tcp-server
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/tcp-server.cfg
+module l4re
+module ned
+module tcp-server.cfg
+module virt-net.io
+module io
+module tcp_server

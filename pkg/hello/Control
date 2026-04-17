@@ -1,2 +1,2 @@
-requires: stdlibs compiler-rt
+requires: stdlibs compiler-rt lwip libc_be_socket_lwip libio-vbus libstdc++ l4util libsigma0
 Maintainer: adam@os.inf.tu-dresden.de

@@ -49,11 +49,17 @@ create_spi_device(L4::Cap<L4::Factory> factory)
   auto dev = L4Re::chkcap(L4Re::Util::cap_alloc.alloc<Spi_device_ops>(),
                           "Alloc SPI device cap");
 
-  L4Re::chksys(l4_error(factory->create(dev, 1 /* Type_rpc */,
-                   "cs="    _XSTR(CONFIG_SSD1306_SPI_CS),
-                   "mode="  _XSTR(CONFIG_SSD1306_SPI_MODE),
-                   "speed=" _XSTR(CONFIG_SSD1306_SPI_SPEED_KHZ) "000")),
-               "Create SPI device");
+  char cs_str[16], mode_str[12], speed_str[24];
+  snprintf(cs_str,    sizeof(cs_str),    "cs=%d",    CONFIG_SSD1306_SPI_CS);
+  snprintf(mode_str,  sizeof(mode_str),  "mode=%d",  CONFIG_SSD1306_SPI_MODE);
+  snprintf(speed_str, sizeof(speed_str), "speed=%d", CONFIG_SSD1306_SPI_SPEED_KHZ * 1000);
+
+  L4Re::chksys(
+    l4_error(factory->create(dev, 1L /* Type_rpc */)
+             << static_cast<char const *>(cs_str)
+             << static_cast<char const *>(mode_str)
+             << static_cast<char const *>(speed_str)),
+    "Create SPI device");
   return dev;
 }
 

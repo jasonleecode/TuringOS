@@ -7,8 +7,51 @@ echo "=========================================="
 
 PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
-# 优先使用 ARM Virt 镜像，如果不存在则使用 ARM64 RPi4 镜像
+# ---- 命令行参数解析 ----
+NET_MODE=""    # "" = 无网络, "tcp" = TCP server 模式 (hostfwd)
+HOST_PORT=5555 # 主机侧端口，转发到 guest:5000
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --net-tcp)
+            NET_MODE="tcp"
+            shift
+            ;;
+        --host-port)
+            HOST_PORT="$2"
+            shift 2
+            ;;
+        --help|-h)
+            echo ""
+            echo "用法: $0 [选项]"
+            echo ""
+            echo "选项:"
+            echo "  --net-tcp         启用网络 (用户模式 NAT + hostfwd tcp:HOST_PORT->:5000)"
+            echo "  --host-port PORT  主机转发端口 (默认 5555)"
+            echo ""
+            echo "示例:"
+            echo "  $0                     # 无网络，标准启动"
+            echo "  $0 --net-tcp           # 启用网络，主机端口 5555 → 客户机 5000"
+            echo "  $0 --net-tcp --host-port 8080"
+            echo ""
+            echo "TCP server 测试:"
+            echo "  1. 先构建: make -C build/l4re_virt PKGS=hello"
+            echo "  2. 启动:   $0 --net-tcp"
+            echo "  3. 在另一终端: python3 tools/tcp_client.py --port $HOST_PORT"
+            exit 0
+            ;;
+        *)
+            echo "未知参数: $1 (使用 --help 查看帮助)"
+            shift
+            ;;
+    esac
+done
+
+# ---- 查找镜像 ----
 BUILDS=(
+    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_tcp-server.elf"
+    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell-rtc.elf"
+    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
     "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
     "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
     "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
@@ -28,15 +71,11 @@ if [ -z "$IMAGE" ]; then
     echo "错误: 找不到引导镜像"
     echo ""
     echo "请先运行构建:"
-    echo "  ./build.sh              # 构建 ARM64 (RPi4) 镜像"
-    echo ""
-    echo "或者直接使用 QEMU 启动已构建的镜像:"
-    echo "  qemu-system-aarch64 -M virt -cpu cortex-a57 -m 1024M -nographic \\"
-    echo "    -kernel /Users/jason/Documents/opensource/turingos/build/l4re_arm64/images/bootstrap.elf"
+    echo "  make -C build/l4re_virt PKGS=hello"
     exit 1
 fi
 
-# 检测镜像架构
+# ---- 检测镜像架构 ----
 MACHINE_TYPE=""
 if echo "$IMAGE" | grep -q "l4re_arm64\|rpi4"; then
     MACHINE_TYPE="aarch64"
@@ -51,12 +90,25 @@ elif echo "$IMAGE" | grep -q "l4re_virt"; then
     MEM="-m 256M"
     MACHINE="-M virt"
 else
-    # 默认使用 ARM64
     MACHINE_TYPE="aarch64"
     QEMU_ARCH="qemu-system-aarch64"
     CPU="-cpu cortex-a57"
     MEM="-m 1024M"
     MACHINE="-M virt,virtualization=true"
+fi
+
+# ---- 网络参数 ----
+NET_ARGS=""
+if [ "$NET_MODE" = "tcp" ]; then
+    NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${HOST_PORT}-:5000 -device virtio-net-device,netdev=net0"
+    echo ""
+    echo "网络模式: 用户 NAT (slirp)"
+    echo "  客户机 IP : 10.0.2.15"
+    echo "  客户机端口: 5000 (TCP echo server)"
+    echo "  主机转发  : localhost:${HOST_PORT} → 客户机:5000"
+    echo ""
+    echo "测试命令 (在另一终端):"
+    echo "  python3 tools/tcp_client.py --port ${HOST_PORT}"
 fi
 
 echo ""
@@ -67,10 +119,12 @@ echo "启动 L4Re 系统..."
 echo "按 Ctrl-A X 退出 QEMU"
 echo "------------------------------------------"
 
+# shellcheck disable=SC2086
 $QEMU_ARCH \
     $MACHINE \
     $CPU \
     $MEM \
     -kernel "$IMAGE" \
     -nographic \
-    -serial mon:stdio
+    -serial mon:stdio \
+    $NET_ARGS
