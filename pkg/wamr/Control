@@ -1,0 +1,2 @@
+requires: stdlibs libc l4re
+provides: wamr
