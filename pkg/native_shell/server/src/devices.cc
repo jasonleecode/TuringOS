@@ -1,0 +1,60 @@
+// Device registration for native_shell.
+// Called from main() after Devfs::init().
+// Each device is registered only if its hardware capability is available.
+
+#include <l4/devfs/devfs.h>
+#include <l4/re/env>
+#include <l4/re/util/cap_alloc>
+#include <l4/sys/factory>
+#include <l4/vbus/vbus>
+#include <l4/vbus/vbus_gpio>
+
+#include <stdio.h>
+
+#include "dev_temp.h"
+#include "dev_rtc.h"
+#include "dev_radio.h"
+
+void setup_devices()
+{
+  /* /dev/rtc0 — always try; works via CLOCK_REALTIME even without RTC cap */
+  Devfs::register_device("rtc0", cxx::make_ref_obj<Rtc_device_file>());
+
+  /* /dev/temp0 — DS18B20 on GPIO pin 4 (requires vbus with GPIO) */
+  {
+    auto vbus = L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus");
+    if (vbus.is_valid()) {
+      L4vbus::Device gpio_dev;
+      if (vbus->root().device_by_hid(&gpio_dev, "gpio") >= 0) {
+        Devfs::register_device(
+          "temp0",
+          cxx::make_ref_obj<Temp_device_file>(L4vbus::Gpio_pin(gpio_dev, 4)));
+      } else {
+        printf("devfs: GPIO not found on vbus, /dev/temp0 not registered\n");
+      }
+    }
+  }
+
+  /* /dev/radio0 — TEF6686HN on I2C (requires 'i2c' factory cap) */
+  {
+    auto factory = L4Re::Env::env()->get_cap<L4::Factory>("i2c");
+    if (factory.is_valid()) {
+      auto dev = L4Re::Util::cap_alloc.alloc<I2c_device_ops>();
+      if (dev.is_valid()) {
+        char addr_str[16];
+        snprintf(addr_str, sizeof(addr_str), "addr=%x",
+                 (unsigned)Tef6686hn::I2c_addr);
+        long r = l4_error(factory->create(dev, 1L)
+                          << static_cast<char const *>(addr_str));
+        if (r >= 0) {
+          Devfs::register_device("radio0",
+            cxx::make_ref_obj<Radio_device_file>(dev));
+        } else {
+          printf("devfs: I2C device create failed (%ld), "
+                 "/dev/radio0 not registered\n", r);
+          L4Re::Util::cap_alloc.free(dev);
+        }
+      }
+    }
+  }
+}

@@ -3,7 +3,10 @@
 #include <cstring>
 #include <readline/readline.h>
 #include <readline/history.h>
+#include <l4/devfs/devfs.h>
 #include "commands.h"
+
+extern void setup_devices();
 
 static constexpr int MAX_ARGS = 64;
 static constexpr int MAX_LINE = 4096;
@@ -73,6 +76,9 @@ static char **shell_completion(const char *text, int start, int end)
 
 int main()
 {
+    Devfs::init();
+    setup_devices();
+
     rl_attempted_completion_function = shell_completion;
 
     printf("TuringOS Native Shell\n");
