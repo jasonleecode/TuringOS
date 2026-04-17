@@ -113,6 +113,9 @@
 #define QUEUE_ALIGN_V1  64U
 #define Q_USED_OFF      320U
 
+/* On-wire virtio-net header: 10 bytes in legacy mode without MRG_RXBUF */
+#define VNET_HDR_WIRE   10
+
 /* Device status bits */
 #define VTSTS_ACKNOWLEDGE     0x01
 #define VTSTS_DRIVER          0x02
@@ -258,17 +261,13 @@ static void accept_features(unsigned sel, l4_uint32_t bits)
 /* ------------------------------------------------------------------ */
 static err_t vnet_output(struct netif */*netif*/, struct pbuf *p)
 {
-  printf("vnet_output: sending %u bytes\n", (unsigned)p->tot_len);
-  /* Build TX packet: virtio-net header + ethernet frame */
-  l4_uint16_t pkt_len = (l4_uint16_t)(sizeof(struct vnet_hdr) + p->tot_len);
+  l4_uint16_t pkt_len = (l4_uint16_t)(VNET_HDR_WIRE + p->tot_len);
   if (pkt_len > (l4_uint16_t)sizeof(dma->tx_buf))
     return ERR_MEM;
 
-  struct vnet_hdr *hdr = reinterpret_cast<struct vnet_hdr *>(dma->tx_buf);
-  memset(hdr, 0, sizeof(*hdr));
-  hdr->num_buffers = 1;
+  memset(dma->tx_buf, 0, VNET_HDR_WIRE);
 
-  l4_uint8_t *payload = dma->tx_buf + sizeof(*hdr);
+  l4_uint8_t *payload = dma->tx_buf + VNET_HDR_WIRE;
   l4_uint16_t copied  = pbuf_copy_partial(p, payload, p->tot_len, 0);
   (void)copied;
 
@@ -325,18 +324,11 @@ static void *rx_thread(void *arg)
           l4_uint16_t   id  = (l4_uint16_t)ue.id;
           l4_uint32_t   len = ue.len;
 
-          /* Debug: show ethernet type and first bytes */
-          {
-            l4_uint8_t *raw = dma->rx_buf[id];
-            l4_uint16_t etype = (l4_uint16_t)((raw[22] << 8) | raw[23]); /* offset 12 in ethernet header, after vnet_hdr(10 bytes) */
-            printf("rx_thread: pkt id=%u len=%u etype=0x%04x\n", id, len, etype);
-          }
-
-          if (len > sizeof(struct vnet_hdr))
+          if (len > VNET_HDR_WIRE)
             {
-              /* Skip virtio-net header, hand ethernet frame to lwIP */
-              l4_uint8_t *frame = dma->rx_buf[id] + sizeof(struct vnet_hdr);
-              l4_uint16_t  flen = (l4_uint16_t)(len - sizeof(struct vnet_hdr));
+              /* Skip 10-byte on-wire header (legacy, no MRG_RXBUF) */
+              l4_uint8_t *frame = dma->rx_buf[id] + VNET_HDR_WIRE;
+              l4_uint16_t  flen = (l4_uint16_t)(len - VNET_HDR_WIRE);
 
               struct pbuf *pb = pbuf_alloc(PBUF_RAW, flen, PBUF_POOL);
               if (pb)
@@ -471,15 +463,16 @@ static bool virtio_net_init_v1(struct virtnet_dma *vdma)
   vreg_w(VTMMIO_QUEUE_PFN, tx_pfn);
   printf("virtio_net: TX queue pfn=0x%x\n", tx_pfn);
 
-  /* Pre-fill RX */
-  prefill_rx(qsz);
-
   dma->tx_q.avail.flags = 0;
   dma->tx_q.avail.idx   = 0;
 
-  /* DRIVER_OK  (no FEATURES_OK step in legacy) */
+  /* DRIVER_OK before prefill: QEMU ignores QUEUE_NOTIFY sent before
+     the device is active. Set DRIVER_OK first, then fill the RX ring. */
   vreg_w(VTMMIO_STATUS, VTSTS_ACKNOWLEDGE | VTSTS_DRIVER | VTSTS_DRIVER_OK);
   __sync_synchronize();
+
+  prefill_rx(qsz);
+
   (void)vdma;
   printf("virtio_net: device ready (v1 legacy)\n");
   return true;

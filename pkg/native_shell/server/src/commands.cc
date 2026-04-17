@@ -42,6 +42,8 @@ shell_cmd commands[] = {
     /* hardware */
     { "temp",    "Read DS18B20 temperature  [pin]",                 cmd_temp  },
     { "radio",   "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
+    /* network */
+    { "net",     "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net },
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);
