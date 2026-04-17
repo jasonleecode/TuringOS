@@ -76,7 +76,9 @@ static char **shell_completion(const char *text, int start, int end)
 
 int main()
 {
-    Devfs::init();
+    int r = Devfs::init();
+    if (r < 0)
+        printf("devfs: mount failed (%d)\n", r);
     setup_devices();
 
     rl_attempted_completion_function = shell_completion;

@@ -9,3 +9,8 @@ REQUIRES_LIBS	= readline rtc rtc_libc_be ds18b20 tef6686hn \
 		  devfs
 
 include $(L4DIR)/mk/prog.mk
+
+# backend/vfs.h uses off64_t/stat64 which require __USE_LARGEFILE64.
+# The build system strips _GNU_SOURCE (-U_GNU_SOURCE), so re-add it
+# here (after the include) so GCC sees -U before -D and keeps it defined.
+CPPFLAGS += -D_GNU_SOURCE

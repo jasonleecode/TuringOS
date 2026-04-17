@@ -157,7 +157,7 @@ public:
       pthread_mutex_unlock(&g_reg.lock);
     }
 
-    struct dirent64 *dest = reinterpret_cast<struct dirent64 *>(buf);
+    dirent64 *dest = reinterpret_cast<dirent64 *>(buf);
     ssize_t ret = 0;
     const size_t total = 2 + _dent_snap.size(); // ".", "..", devices
 
@@ -170,7 +170,7 @@ public:
       else                     { name = _dent_snap[_dent_idx - 2].c_str(); dtype = DT_CHR; }
 
       unsigned l = (unsigned)strlen(name) + 1;
-      unsigned n = (unsigned)offsetof(struct dirent64, d_name) + l;
+      unsigned n = (unsigned)offsetof(dirent64, d_name) + l;
       n = (n + (unsigned)sizeof(long) - 1) & ~((unsigned)sizeof(long) - 1);
 
       if (n > dest_sz)
@@ -184,7 +184,7 @@ public:
 
       ret      += n;
       dest_sz  -= n;
-      dest      = reinterpret_cast<struct dirent64 *>(
+      dest      = reinterpret_cast<dirent64 *>(
                     reinterpret_cast<char *>(dest) + n);
       ++_dent_idx;
     }
@@ -220,7 +220,7 @@ int init()
   register_device("null", cxx::make_ref_obj<Null_file>());
   register_device("zero", cxx::make_ref_obj<Zero_file>());
 
-  return L4Re::Vfs::vfs_ops->mount("/dev", g_dir);
+  return L4Re::Vfs::vfs_ops->mount("dev", g_dir);
 }
 
 int register_device(const char *name, cxx::Ref_ptr<Device_file> file)
