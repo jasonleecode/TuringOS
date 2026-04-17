@@ -15,8 +15,6 @@
 #   l4re       - 仅构建 L4Re 运行时
 #   bootstrap  - 仅生成引导镜像 (需先完成 kernel 和 l4re)
 #   collect    - 收集构建产物到 build/artifacts 目录
-#   menuconfig - 交互式驱动配置菜单
-#   defconfig  - 使用默认驱动配置
 #   clean      - 清理编译中间文件
 #   cleanall   - 完全清理构建目录
 #
@@ -106,7 +104,8 @@ setup_board() {
             error "未知目标板: $board
 支持的目标板:
   rpi4   Raspberry Pi 4B (ARM64, 默认)
-  bbb    BeagleBone Black (AM335x, ARM)"
+  bbb    BeagleBone Black (AM335x, ARM)
+  virt   QEMU ARM Virt (Cortex-A15)"
             ;;
     esac
 }
@@ -152,8 +151,8 @@ check_deps() {
     fi
 
     # 检查 qemu (可选，仅用于运行)
-    if [ -n "$QEMU_CMD" ] && ! command -v "$QEMU_CMD" &>/dev/null; then
-        warn "找不到 $QEMU_CMD，构建可以继续但无法运行"
+    if [ -n "$QEMU_CMD" ] && ! command -v "$(echo "$QEMU_CMD" | cut -d' ' -f1)" &>/dev/null; then
+        warn "找不到 $(echo "$QEMU_CMD" | cut -d' ' -f1)，构建可以继续但无法运行"
     fi
 
     # 检查 flex/bison (kconfig 工具构建需要)
@@ -389,7 +388,7 @@ build_bootstrap() {
 
     # 选择启动入口 (可通过环境变量 ENTRY 覆盖)
     # 可用入口: fiasco-base-test, shell, demo
-    local entry="${ENTRY:-demo}"
+    local entry="${ENTRY:-native-shell}"
     info "使用启动入口: $entry"
 
     cd "$L4RE_BUILD"
@@ -399,10 +398,10 @@ build_bootstrap() {
     if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
         cp "$L4RE_BUILD/images/bootstrap.elf" "$BUILD_OUT/"
         info "引导镜像已生成: $BUILD_OUT/bootstrap.elf"
-        if [ -n "$QEMU_CMD" ]; then
-            info "可使用 ./run_qemu.sh 启动系统"
+        if [ "$BOARD" = "virt" ]; then
+            info "可使用 ./run_qemu_virt.sh 启动系统"
         else
-            info "BBB 需要真机部署: 通过 U-Boot 从 SD 卡加载"
+            info "真机部署需要通过 U-Boot 从 SD 卡加载"
         fi
     else
         error "引导镜像生成失败"
@@ -440,11 +439,6 @@ do_clean() {
         if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
             info "  清理 bootstrap.elf"
             rm -f "$BUILD_OUT/bootstrap.elf"
-        fi
-
-        # 清理 .config 文件
-        if [ -f "$BUILD_OUT/.config" ]; then
-            rm -f "$BUILD_OUT/.config" "$BUILD_OUT/.config.old"
         fi
 
     else
@@ -487,23 +481,7 @@ collect_artifacts() {
         info "✓ 内核: fiasco-${BOARD}"
     fi
 
-    # 收集 bootstrap
-    local bootstrap_dir="$L4RE_BUILD/bin/arm_armv7a/plain"
-    if [ "$BOARD" = "rpi4" ]; then
-        bootstrap_dir="$L4RE_BUILD/bin/arm_armv8a/plain"
-    fi
-
-    if [ -f "$bootstrap_dir/bootstrap.elf" ]; then
-        cp "$bootstrap_dir/bootstrap.elf" "$artifacts_dir/bootstrap-${BOARD}.elf"
-        info "✓ Bootstrap ELF: bootstrap-${BOARD}.elf"
-    fi
-
-    if [ -f "$bootstrap_dir/bootstrap.raw" ] || [ -L "$bootstrap_dir/bootstrap.raw" ]; then
-        cp -L "$bootstrap_dir/bootstrap.raw" "$artifacts_dir/bootstrap-${BOARD}.raw" 2>/dev/null || true
-        info "✓ Bootstrap RAW: bootstrap-${BOARD}.raw"
-    fi
-
-    # 收集完整的引导镜像（需要先运行 build_bootstrap）
+    # 收集 bootstrap（完整引导镜像）
     if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
         cp "$L4RE_BUILD/images/bootstrap.elf" "$artifacts_dir/bootstrap-image-${BOARD}.elf"
         info "✓ Bootstrap 完整镜像: bootstrap-image-${BOARD}.elf"
@@ -539,12 +517,6 @@ EOF
 ### Bootstrap
 EOF
 
-    if [ -f "$artifacts_dir/bootstrap-${BOARD}.elf" ]; then
-        echo "- \`bootstrap-${BOARD}.elf\` - Bootstrap 引导加载器 (ELF 格式)" >> "$artifacts_dir/README.md"
-    fi
-    if [ -f "$artifacts_dir/bootstrap-${BOARD}.raw" ]; then
-        echo "- \`bootstrap-${BOARD}.raw\` - Bootstrap 引导加载器 (RAW 二进制格式)" >> "$artifacts_dir/README.md"
-    fi
     if [ -f "$artifacts_dir/bootstrap-image-${BOARD}.elf" ]; then
         echo "- \`bootstrap-image-${BOARD}.elf\` - 包含所有模块的完整引导镜像" >> "$artifacts_dir/README.md"
     fi
@@ -554,22 +526,6 @@ EOF
 
     cat >> "$artifacts_dir/README.md" << EOF
 
-## 使用方法
-
-### BeagleBone Black (AM335x)
-1. 将 SD 卡格式化为 FAT32
-2. 复制 \`bootstrap-${BOARD}.raw\` 到 SD 卡
-3. 通过 U-Boot 加载:
-   \`\`\`
-   fatload mmc 0 0x80000000 bootstrap-${BOARD}.raw
-   go 0x80000000
-   \`\`\`
-
-### Raspberry Pi 4
-1. 准备 SD 卡并安装固件
-2. 复制 \`bootstrap-${BOARD}.elf\` 到 boot 分区
-3. 配置 config.txt 使用该内核
-
 ## 生成完整镜像
 
 如果需要包含所有模块的完整引导镜像，请运行：
@@ -577,58 +533,12 @@ EOF
 ./build.sh --board ${BOARD} bootstrap
 \`\`\`
 
-这将生成 \`bootstrap-image-${BOARD}.elf\` 和 \`bootstrap-final-${BOARD}.elf\`
-
 ---
 自动生成于 $(date +"%Y-%m-%d %H:%M:%S")
 EOF
 
     info "构建产物已收集到: $artifacts_dir"
     ls -lh "$artifacts_dir"
-}
-
-# ============================================================
-# 驱动配置
-# ============================================================
-check_config() {
-    if [ ! -f "$BUILD_OUT/.config" ]; then
-        warn "驱动配置文件 (build/.config) 不存在"
-        info "使用默认配置 (defconfig) ..."
-        $MAKE -C "$PROJ_ROOT" defconfig
-    fi
-}
-
-# 将配置同步到 L4Re 构建目录
-sync_config_to_l4re() {
-    local auto_conf="$BUILD_OUT/include/config/auto.conf"
-    local autoconf_h="$BUILD_OUT/include/generated/autoconf.h"
-
-    # 确保 auto.conf 存在 (syncconfig 已在 defconfig/menuconfig 中自动执行)
-    if [ ! -f "$auto_conf" ]; then
-        info "生成 auto.conf ..."
-        $MAKE -C "$PROJ_ROOT" syncconfig
-    fi
-
-    # 如果 L4Re 构建目录存在，复制配置文件进去
-    if [ -d "$L4RE_BUILD" ]; then
-        info "同步驱动配置到 L4Re 构建目录..."
-        mkdir -p "$L4RE_BUILD/include/config"
-        mkdir -p "$L4RE_BUILD/include/generated"
-        cp "$auto_conf" "$L4RE_BUILD/include/config/auto.conf"
-        cp "$autoconf_h" "$L4RE_BUILD/include/generated/autoconf.h"
-
-        # 复制依赖跟踪用的空文件 (用于 make 增量构建)
-        if [ -d "$BUILD_OUT/include/config" ]; then
-            find "$BUILD_OUT/include/config" -maxdepth 1 -type f ! -name 'auto.conf*' \
-                -exec cp {} "$L4RE_BUILD/include/config/" \;
-        fi
-        info "驱动配置已同步"
-    fi
-}
-
-do_menuconfig() {
-    info "启动驱动配置菜单..."
-    $MAKE -C "$PROJ_ROOT" menuconfig
 }
 
 # ============================================================
@@ -672,8 +582,6 @@ main() {
         all)
             check_deps
             init_submodules
-            check_config
-            sync_config_to_l4re
             build_kernel
             build_l4re
             build_bootstrap
@@ -687,8 +595,6 @@ main() {
             ;;
         l4re)
             check_deps
-            check_config
-            sync_config_to_l4re
             build_l4re
             collect_artifacts
             ;;
@@ -698,12 +604,6 @@ main() {
             ;;
         collect)
             collect_artifacts
-            ;;
-        menuconfig)
-            do_menuconfig
-            ;;
-        defconfig)
-            $MAKE -C "$PROJ_ROOT" defconfig
             ;;
         clean)
             do_clean "light"
@@ -721,7 +621,7 @@ main() {
 }
 
 show_usage() {
-    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|menuconfig|defconfig|clean|cleanall}"
+    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|clean|cleanall}"
     echo ""
     echo "目标板 (--board):"
     echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
@@ -734,8 +634,6 @@ show_usage() {
     echo "  l4re        仅构建 L4Re 运行时"
     echo "  bootstrap   仅生成引导镜像 (需先完成 kernel 和 l4re)"
     echo "  collect     收集构建产物到 build/artifacts 目录"
-    echo "  menuconfig  交互式驱动配置菜单"
-    echo "  defconfig   使用默认驱动配置"
     echo "  clean       清理编译中间文件（保留构建目录结构）"
     echo "  cleanall    完全清理构建目录（删除 build/kernel_* 和 build/l4re_*）"
     echo ""
