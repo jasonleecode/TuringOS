@@ -40,6 +40,10 @@ lwip协议栈已经有了，看看接下来还有哪些其他的需要优化的�
 
 1. 测试多核心任务调度；
 2. 设备驱动 ftd，tree，VFS挂载
-3. net tools，ifconfig和ping 
-4. wamr
+3. 网络驱动和应用，net tools，ifconfig 和 ping 
+4. wamr已经完成移植，需要运行起来验证
 5. shell里启动程序
+6. 日志系统
+7. 存储操作和文件系统
+8. 显卡驱动与GUI
+9. 终端用户名和密码登录

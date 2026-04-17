@@ -186,6 +186,18 @@ static struct netif n_netif;
 
 static bool g_net_running = false;  /* true once server thread started */
 
+static pthread_mutex_t g_net_init_mtx  = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t  g_net_init_cv   = PTHREAD_COND_INITIALIZER;
+static bool            g_net_init_done = false;
+
+static void net_signal_init()
+{
+  pthread_mutex_lock(&g_net_init_mtx);
+  g_net_init_done = true;
+  pthread_cond_signal(&g_net_init_cv);
+  pthread_mutex_unlock(&g_net_init_mtx);
+}
+
 /* ------------------------------------------------------------------ */
 /* MMIO helpers                                                         */
 /* ------------------------------------------------------------------ */
@@ -677,6 +689,7 @@ static void *net_server_thread(void * /*arg*/)
   if (!net_alloc_dma(&vdma, &phys)) {
     printf("net: DMA allocation failed\n");
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
 
@@ -685,6 +698,7 @@ static void *net_server_thread(void * /*arg*/)
   if (!net_map_mmio(&mmio_virt)) {
     printf("net: MMIO mapping failed\n");
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
 
@@ -695,6 +709,7 @@ static void *net_server_thread(void * /*arg*/)
   if (!net_virtio_init(mmio_virt, phys, vdma)) {
     printf("net: virtio init failed\n");
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
 
@@ -705,6 +720,7 @@ static void *net_server_thread(void * /*arg*/)
                          nullptr, net_netif_init, ethernet_input) != ERR_OK) {
     printf("net: netif_add failed\n");
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
   LOCK_TCPIP_CORE();
@@ -720,6 +736,7 @@ static void *net_server_thread(void * /*arg*/)
   if (srv < 0) {
     perror("net: socket");
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
 
@@ -735,18 +752,23 @@ static void *net_server_thread(void * /*arg*/)
     perror("net: bind");
     close(srv);
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
   if (listen(srv, 4) < 0) {
     perror("net: listen");
     close(srv);
     g_net_running = false;
+    net_signal_init();
     return nullptr;
   }
 
   printf("net: TCP echo server listening on guest port %d\n", NET_TCP_PORT);
   printf("net: from host run (uses QEMU hostfwd localhost:5555 -> guest:5000):\n");
   printf("  python3 tools/tcp_client.py\n");
+
+  /* Signal cmd_net that initialisation is complete */
+  net_signal_init();
 
   for (;;) {
     struct sockaddr_in cli{};
@@ -783,8 +805,9 @@ void cmd_net(int argc, char **argv)
     return;
   }
 
-  g_net_running = true;
-  printf("net: starting TCP echo server in background...\n");
+  g_net_running   = true;
+  g_net_init_done = false;
+  printf("net: starting TCP echo server...\n");
 
   pthread_t t;
   pthread_attr_t attr;
@@ -793,6 +816,14 @@ void cmd_net(int argc, char **argv)
   if (pthread_create(&t, &attr, net_server_thread, nullptr) != 0) {
     perror("net: pthread_create");
     g_net_running = false;
+    pthread_attr_destroy(&attr);
+    return;
   }
   pthread_attr_destroy(&attr);
+
+  /* Wait for server thread to finish initialisation (or fail) */
+  pthread_mutex_lock(&g_net_init_mtx);
+  while (!g_net_init_done)
+    pthread_cond_wait(&g_net_init_cv, &g_net_init_mtx);
+  pthread_mutex_unlock(&g_net_init_mtx);
 }
