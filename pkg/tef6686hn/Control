@@ -1,0 +1,2 @@
+requires: stdlibs libstdc++ i2c-server
+provides: tef6686hn

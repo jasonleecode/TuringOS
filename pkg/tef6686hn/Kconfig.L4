@@ -1,0 +1,40 @@
+menu "TEF6686HN car radio tuner driver"
+
+config TEF6686HN
+	bool "Enable TEF6686HN radio tuner driver (I2C)"
+	default y
+	help
+	  NXP TEF6686HN software-defined car radio tuner.
+	  Supports FM (64–108 MHz), MW (522–1710 kHz) and LW (144–288 kHz).
+	  Communicates over I2C at address 0x1C.
+
+if TEF6686HN
+
+config TEF6686HN_I2C_ADDR
+	hex "I2C device address (7-bit)"
+	default 0x1C
+	help
+	  7-bit I2C address of the TEF6686HN.  The default is 0x1C; some
+	  boards connect the ADDR pin differently.
+
+config TEF6686HN_FM_MIN_KHZ
+	int "FM band lower limit (kHz)"
+	default 87500
+	help
+	  Lowest FM frequency in kHz.  Use 64000 for Japan band,
+	  87500 for standard OIRT/CCIR band.
+
+config TEF6686HN_FM_MAX_KHZ
+	int "FM band upper limit (kHz)"
+	default 108000
+
+config TEF6686HN_BUILD_EXAMPLE
+	bool "Build tef6686hn-example demo program"
+	default y
+	help
+	  Build a demonstration that scans a few FM/AM frequencies,
+	  reads signal quality, and prints the results.
+
+endif # TEF6686HN
+
+endmenu
