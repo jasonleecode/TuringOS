@@ -48,15 +48,26 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- 查找镜像 ----
-BUILDS=(
-    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_tcp-server.elf"
-    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell-rtc.elf"
-    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-    "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-    "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
-    "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-    "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
-)
+# --net-tcp 模式优先 tcp-server 镜像，默认优先 native-shell
+if [ "$NET_MODE" = "tcp" ]; then
+    BUILDS=(
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_tcp-server.elf"
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
+        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
+        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
+        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
+    )
+else
+    BUILDS=(
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_tcp-server.elf"
+        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
+        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
+        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
+    )
+fi
 
 IMAGE=""
 for img in "${BUILDS[@]}"; do
