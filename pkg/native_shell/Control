@@ -1,1 +1,1 @@
-requires: readline stdlibs compiler-rt rtc_libc_be rtc
+requires: readline stdlibs compiler-rt rtc_libc_be rtc ds18b20
