@@ -46,6 +46,7 @@ shell_cmd commands[] = {
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
     /* network */
     { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net },
+    { "ifconfig",   "Show network interfaces and IP info",                  cmd_ifconfig },
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);

@@ -40,6 +40,7 @@ void cmd_radio(int argc, char **argv);
 
 /* network */
 void cmd_net(int argc, char **argv);
+void cmd_ifconfig(int argc, char **argv);
 
 /* system */
 void cmd_list_tasks(int argc, char **argv);

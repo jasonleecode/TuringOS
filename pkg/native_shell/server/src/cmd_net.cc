@@ -31,6 +31,7 @@
 #include <lwip/sys.h>
 #include <lwip/etharp.h>
 #include <lwip/ip4_addr.h>
+#include <lwip/netif.h>
 #include <netif/ethernet.h>
 
 #include <l4/re/env>
@@ -832,4 +833,68 @@ void cmd_net(int argc, char **argv)
   while (!g_net_init_done)
     pthread_cond_wait(&g_net_init_cv, &g_net_init_mtx);
   pthread_mutex_unlock(&g_net_init_mtx);
+}
+
+/* ------------------------------------------------------------------ */
+/* ifconfig command                                                     */
+/* ------------------------------------------------------------------ */
+void cmd_ifconfig(int argc, char **argv)
+{
+  (void)argc; (void)argv;
+
+  LOCK_TCPIP_CORE();
+  struct netif *nif = netif_list;
+  if (!nif) {
+    UNLOCK_TCPIP_CORE();
+    printf("No network interfaces. Run 'net' first.\n");
+    return;
+  }
+
+  for (; nif != nullptr; nif = nif->next) {
+    char ifname[12];
+    snprintf(ifname, sizeof(ifname), "%c%c%u",
+             nif->name[0], nif->name[1], (unsigned)nif->num);
+
+    /* Build flags string */
+    char flags_str[64] = {};
+    char *fp = flags_str;
+    unsigned fval = 0;
+    if (nif->flags & NETIF_FLAG_UP)        { fval |= 0x0001; fp += snprintf(fp, 16, "UP,");        }
+    if (nif->flags & NETIF_FLAG_BROADCAST) { fval |= 0x0002; fp += snprintf(fp, 16, "BROADCAST,"); }
+    if (nif->flags & NETIF_FLAG_LINK_UP)   { fval |= 0x0040; fp += snprintf(fp, 16, "RUNNING,");   }
+    if (nif->flags & NETIF_FLAG_ETHARP)    { fval |= 0x1000; fp += snprintf(fp, 16, "MULTICAST,"); }
+    if (fp > flags_str) *(fp - 1) = '\0'; /* remove trailing comma */
+
+    printf("%s: flags=%04x<%s>  mtu %u\n",
+           ifname, fval, flags_str, (unsigned)nif->mtu);
+
+    /* IPv4 */
+    const ip4_addr_t *ip   = netif_ip4_addr(nif);
+    const ip4_addr_t *mask = netif_ip4_netmask(nif);
+    const ip4_addr_t *gw   = netif_ip4_gw(nif);
+
+    if (!ip4_addr_isany(ip)) {
+      ip4_addr_t bcast;
+      bcast.addr = ip->addr | ~mask->addr;
+
+      char ip_s[16], mask_s[16], bcast_s[16], gw_s[16];
+      snprintf(ip_s,    sizeof(ip_s),    "%s", ip4addr_ntoa(ip));
+      snprintf(mask_s,  sizeof(mask_s),  "%s", ip4addr_ntoa(mask));
+      snprintf(bcast_s, sizeof(bcast_s), "%s", ip4addr_ntoa(&bcast));
+      snprintf(gw_s,    sizeof(gw_s),    "%s", ip4addr_ntoa(gw));
+
+      printf("        inet %s  netmask %s  broadcast %s\n",
+             ip_s, mask_s, bcast_s);
+      printf("        gateway %s\n", gw_s);
+    }
+
+    /* MAC */
+    if (nif->hwaddr_len == 6) {
+      printf("        ether %02x:%02x:%02x:%02x:%02x:%02x\n",
+             nif->hwaddr[0], nif->hwaddr[1], nif->hwaddr[2],
+             nif->hwaddr[3], nif->hwaddr[4], nif->hwaddr[5]);
+    }
+    printf("\n");
+  }
+  UNLOCK_TCPIP_CORE();
 }
