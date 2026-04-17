@@ -34,3 +34,4 @@ void cmd_date(int argc, char **argv);
 
 /* hardware */
 void cmd_temp(int argc, char **argv);
+void cmd_radio(int argc, char **argv);
