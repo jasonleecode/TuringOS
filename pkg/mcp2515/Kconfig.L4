@@ -1,0 +1,74 @@
+menu "MCP2515 CAN controller driver"
+
+config MCP2515
+	bool "Enable MCP2515 CAN controller driver (SPI)"
+	default y
+	help
+	  Microchip MCP2515 standalone CAN 2.0A/B controller.
+	  Communicates with the host over SPI and supports standard
+	  (11-bit) and extended (29-bit) CAN frames.
+
+if MCP2515
+
+choice
+	prompt "Crystal oscillator frequency"
+	default MCP2515_OSC_8MHZ
+
+config MCP2515_OSC_8MHZ
+	bool "8 MHz"
+	help
+	  8 MHz crystal on the MCP2515 XTAL pins.
+
+config MCP2515_OSC_16MHZ
+	bool "16 MHz"
+	help
+	  16 MHz crystal on the MCP2515 XTAL pins.
+
+endchoice
+
+choice
+	prompt "Default CAN bit rate"
+	default MCP2515_BITRATE_500K
+
+config MCP2515_BITRATE_125K
+	bool "125 kbps"
+
+config MCP2515_BITRATE_250K
+	bool "250 kbps"
+
+config MCP2515_BITRATE_500K
+	bool "500 kbps"
+
+config MCP2515_BITRATE_1000K
+	bool "1000 kbps"
+	help
+	  1 Mbps is only available with an 8 MHz crystal using a 4-TQ
+	  bit time, or a 16 MHz crystal using an 8-TQ bit time.
+
+endchoice
+
+config MCP2515_SPI_CS
+	int "SPI chip-select (CS) number"
+	range 0 3
+	default 0
+	help
+	  Which SPI CS line the MCP2515 /CS pin is connected to.
+
+config MCP2515_SPI_SPEED_KHZ
+	int "SPI clock speed (kHz)"
+	range 100 10000
+	default 4000
+	help
+	  SPI bus clock in kHz.  MCP2515 supports up to 10 MHz;
+	  a conservative 4 MHz default works with long wires.
+
+config MCP2515_BUILD_EXAMPLE
+	bool "Build mcp2515-example demo program"
+	default y
+	help
+	  Build the loopback demonstration that sends and receives
+	  a CAN frame using the MCP2515 loopback mode.
+
+endif # MCP2515
+
+endmenu
