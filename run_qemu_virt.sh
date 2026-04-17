@@ -8,15 +8,11 @@ echo "=========================================="
 PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 # ---- 命令行参数解析 ----
-NET_MODE=""    # "" = 无网络, "tcp" = TCP server 模式, "shell" = net-shell 模式
+NET_MODE=""    # "" = 无网络, "shell" = net-shell 模式
 HOST_PORT=5555 # 主机侧端口，转发到 guest:5000
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --net-tcp)
-            NET_MODE="tcp"
-            shift
-            ;;
         --net-shell)
             NET_MODE="shell"
             shift
@@ -30,14 +26,12 @@ while [[ $# -gt 0 ]]; do
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  --net-tcp         启用网络，启动 tcp-server 镜像"
-            echo "  --net-shell       启用网络，启动 net-shell 镜像 (shell 中输入 'net' 启动服务)"
+            echo "  --net-shell       启用网络，在 shell 中输入 'net' 启动 TCP echo server"
             echo "  --host-port PORT  主机转发端口 (默认 5555)"
             echo ""
             echo "示例:"
             echo "  $0                     # 无网络，标准启动"
-            echo "  $0 --net-shell         # 带网络的 shell，输入 'net' 启动 TCP server"
-            echo "  $0 --net-tcp           # 直接启动 TCP echo server"
+            echo "  $0 --net-shell         # 带网络的 shell"
             echo "  $0 --net-shell --host-port 8080"
             echo ""
             echo "TCP server 测试:"
@@ -55,33 +49,13 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- 查找镜像 ----
-if [ "$NET_MODE" = "shell" ]; then
-    BUILDS=(
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
-    )
-elif [ "$NET_MODE" = "tcp" ]; then
-    BUILDS=(
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_tcp-server.elf"
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
-    )
-else
-    BUILDS=(
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_tcp-server.elf"
-        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
-    )
-fi
+BUILDS=(
+    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
+    "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
+    "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
+    "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
+    "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
+)
 
 IMAGE=""
 for img in "${BUILDS[@]}"; do
@@ -96,7 +70,7 @@ if [ -z "$IMAGE" ]; then
     echo "错误: 找不到引导镜像"
     echo ""
     echo "请先运行构建:"
-    echo "  make -C build/l4re_virt PKGS=hello"
+    echo "  make -C build/l4re_virt PKGS=native_shell"
     exit 1
 fi
 
@@ -124,7 +98,7 @@ fi
 
 # ---- 网络参数 ----
 NET_ARGS=""
-if [ "$NET_MODE" = "tcp" ] || [ "$NET_MODE" = "shell" ]; then
+if [ "$NET_MODE" = "shell" ]; then
     NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${HOST_PORT}-:5000 -device virtio-net-device,netdev=net0"
     echo ""
     echo "网络模式: 用户 NAT (slirp)"
@@ -132,9 +106,7 @@ if [ "$NET_MODE" = "tcp" ] || [ "$NET_MODE" = "shell" ]; then
     echo "  客户机端口: 5000 (TCP echo server)"
     echo "  主机转发  : localhost:${HOST_PORT} → 客户机:5000"
     echo ""
-    if [ "$NET_MODE" = "shell" ]; then
-        echo "启动后在 shell 中输入 'net' 启动 TCP echo server"
-    fi
+    echo "启动后在 shell 中输入 'net' 启动 TCP echo server"
     echo "测试命令 (在另一终端):"
     echo "  python3 tools/tcp_client.py --port ${HOST_PORT}"
 fi
