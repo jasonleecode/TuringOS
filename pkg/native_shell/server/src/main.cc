@@ -151,6 +151,7 @@ int main()
     if (r < 0)
         printf("devfs: mount failed (%d)\n", r);
     setup_devices();
+    net_auto_init();
 
     signal(SIGINT, handle_sigint);
     rl_catch_signals             = 1;

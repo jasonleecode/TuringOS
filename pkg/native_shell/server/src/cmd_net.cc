@@ -186,6 +186,7 @@ static l4_uint16_t n_tx_avail_idx = 0;
 static struct netif n_netif;
 
 static bool g_net_running = false;  /* true once server thread started */
+static bool g_net_stack_ready = false; /* true once hw+lwIP init done */
 
 static pthread_mutex_t g_net_init_mtx  = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_net_init_cv   = PTHREAD_COND_INITIALIZER;
@@ -682,15 +683,13 @@ static void handle_client(int cfd, struct sockaddr_in *cli)
   close(cfd);
 }
 
-static void *net_server_thread(void * /*arg*/)
+static void *net_stack_init_thread(void * /*arg*/)
 {
   /* ---- Allocate DMA buffer ---- */
-  struct virtnet_dma *vdma    = nullptr;
-  l4_uint64_t         phys    = 0;
+  struct virtnet_dma *vdma = nullptr;
+  l4_uint64_t         phys = 0;
   if (!net_alloc_dma(&vdma, &phys)) {
     printf("net: DMA allocation failed\n");
-    g_net_running = false;
-    net_signal_init();
     return nullptr;
   }
 
@@ -698,8 +697,6 @@ static void *net_server_thread(void * /*arg*/)
   l4_addr_t mmio_virt = 0;
   if (!net_map_mmio(&mmio_virt)) {
     printf("net: MMIO mapping failed\n");
-    g_net_running = false;
-    net_signal_init();
     return nullptr;
   }
 
@@ -709,8 +706,6 @@ static void *net_server_thread(void * /*arg*/)
   n_tx_avail_idx = 0;
   if (!net_virtio_init(mmio_virt, phys, vdma)) {
     printf("net: virtio init failed\n");
-    g_net_running = false;
-    net_signal_init();
     return nullptr;
   }
 
@@ -720,8 +715,6 @@ static void *net_server_thread(void * /*arg*/)
   if (netifapi_netif_add(&n_netif, &zero, &zero, &zero,
                          nullptr, net_netif_init, ethernet_input) != ERR_OK) {
     printf("net: netif_add failed\n");
-    g_net_running = false;
-    net_signal_init();
     return nullptr;
   }
   LOCK_TCPIP_CORE();
@@ -732,7 +725,12 @@ static void *net_server_thread(void * /*arg*/)
   /* ---- Configure IP ---- */
   net_configure_ip();
 
-  /* ---- Open TCP socket ---- */
+  g_net_stack_ready = true;
+  return nullptr;
+}
+
+static void *net_server_thread(void * /*arg*/)
+{
   int srv = socket(AF_INET, SOCK_STREAM, 0);
   if (srv < 0) {
     perror("net: socket");
@@ -764,13 +762,10 @@ static void *net_server_thread(void * /*arg*/)
     return nullptr;
   }
 
-  printf("net: TCP echo server listening on guest port %d\n", NET_TCP_PORT);
-  printf("net: from host run (uses QEMU hostfwd localhost:5555 -> guest:5000):\n");
-  printf("  python3 tools/tcp_client.py\n");
+  printf("net: TCP echo server listening on port %d\n", NET_TCP_PORT);
+  printf("net: test with: python3 tools/tcp_client.py\n");
 
-  /* Signal cmd_net that initialisation is complete */
   net_signal_init();
-
   task_register("net", "TCP echo server on port 5000");
 
   for (;;) {
@@ -795,20 +790,19 @@ static void *net_server_thread(void * /*arg*/)
 void cmd_net(int argc, char **argv)
 {
   if (argc >= 2 && strcmp(argv[1], "status") == 0) {
-    printf("net: TCP server is %s\n", g_net_running ? "running" : "not running");
+    printf("net: stack %s, TCP server %s\n",
+           g_net_stack_ready ? "ready" : "initializing",
+           g_net_running     ? "running" : "not running");
+    return;
+  }
+
+  if (!g_net_stack_ready) {
+    printf("net: network stack not ready yet (auto-init in progress)\n");
     return;
   }
 
   if (g_net_running) {
     printf("net: TCP server already running\n");
-    return;
-  }
-
-  /* Quick sanity check — sigma0 cap must be present */
-  auto sigma0 = L4Re::Env::env()->get_cap<void>("sigma0");
-  if (!sigma0.is_valid()) {
-    printf("net: error: 'sigma0' capability not available\n");
-    printf("net: boot with the net-shell entry (ned + virt-net.io)\n");
     return;
   }
 
@@ -828,11 +822,25 @@ void cmd_net(int argc, char **argv)
   }
   pthread_attr_destroy(&attr);
 
-  /* Wait for server thread to finish initialisation (or fail) */
   pthread_mutex_lock(&g_net_init_mtx);
   while (!g_net_init_done)
     pthread_cond_wait(&g_net_init_cv, &g_net_init_mtx);
   pthread_mutex_unlock(&g_net_init_mtx);
+}
+
+/* Called once at startup to initialise the network stack in background */
+void net_auto_init()
+{
+  auto sigma0 = L4Re::Env::env()->get_cap<void>("sigma0");
+  if (!sigma0.is_valid())
+    return; /* no virtio-net available, skip silently */
+
+  pthread_t t;
+  pthread_attr_t attr;
+  pthread_attr_init(&attr);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+  pthread_create(&t, &attr, net_stack_init_thread, nullptr);
+  pthread_attr_destroy(&attr);
 }
 
 /* ------------------------------------------------------------------ */
