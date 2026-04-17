@@ -33,4 +33,10 @@ void cmd_uname(int argc, char **argv);
 void cmd_env(int argc, char **argv);
 void cmd_date(int argc, char **argv);
 
+/* hardware commands */
+void cmd_temp(int argc, char **argv);
+
+/* C bridge to C++ DS18B20 driver (implemented in temp.cc) */
+int ds18b20_read_temp(int pin, int *temp_c100);
+
 #endif

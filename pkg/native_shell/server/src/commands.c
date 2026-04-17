@@ -30,6 +30,8 @@ struct shell_cmd commands[] = {
     { "uname",   "Print OS/arch info",                  cmd_uname   },
     { "env",     "Print environment variables",          cmd_env     },
     { "date",    "Print current date and time",          cmd_date    },
+    /* hardware */
+    { "temp",    "Read DS18B20 temperature  [pin]",      cmd_temp    },
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);
@@ -300,4 +302,23 @@ void cmd_date(int argc, char **argv)
         long s = mono.tv_sec % 60;
         printf("(RTC unavailable) uptime: %02ld:%02ld:%02ld\n", h, m, s);
     }
+}
+
+/* ------------------------------------------------------------------ */
+/* Hardware commands                                                    */
+/* ------------------------------------------------------------------ */
+
+void cmd_temp(int argc, char **argv)
+{
+    int pin = 4; /* default GPIO pin, same as ds18b20 example */
+    if (argc >= 2)
+        pin = atoi(argv[1]);
+
+    int temp_c100;
+    if (ds18b20_read_temp(pin, &temp_c100) != 0)
+        return;
+
+    int neg   = (temp_c100 < 0);
+    int abs_v = neg ? -temp_c100 : temp_c100;
+    printf("%s%d.%02d °C\n", neg ? "-" : "", abs_v / 100, abs_v % 100);
 }
