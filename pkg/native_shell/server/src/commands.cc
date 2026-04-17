@@ -173,7 +173,7 @@ void cmd_cat(int argc, char **argv)
         printf("Usage: cat <file>\n");
         return;
     }
-    for (int i = 1; i < argc; i++) {
+    for (int i = 1; i < argc && !g_shell_interrupt; i++) {
         FILE *f = fopen(argv[i], "r");
         if (!f) {
             printf("cat: %s: %s\n", argv[i], strerror(errno));
@@ -181,7 +181,7 @@ void cmd_cat(int argc, char **argv)
         }
         char buf[512];
         size_t n;
-        while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+        while (!g_shell_interrupt && (n = fread(buf, 1, sizeof(buf), f)) > 0)
             fwrite(buf, 1, n, stdout);
         fclose(f);
     }

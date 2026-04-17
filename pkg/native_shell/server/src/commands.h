@@ -1,5 +1,7 @@
 #pragma once
 
+#include <csignal>
+
 typedef void (*cmd_func_t)(int argc, char **argv);
 
 struct shell_cmd {
@@ -38,3 +40,6 @@ void cmd_radio(int argc, char **argv);
 
 /* network */
 void cmd_net(int argc, char **argv);
+
+/* Ctrl+C interrupt flag — set by main's SIGINT handler or stdin polling */
+extern volatile sig_atomic_t g_shell_interrupt;
