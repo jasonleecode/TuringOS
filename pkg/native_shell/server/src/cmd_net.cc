@@ -770,6 +770,8 @@ static void *net_server_thread(void * /*arg*/)
   /* Signal cmd_net that initialisation is complete */
   net_signal_init();
 
+  task_register("net", "TCP echo server on port 5000");
+
   for (;;) {
     struct sockaddr_in cli{};
     socklen_t cli_len = sizeof(cli);
@@ -780,6 +782,10 @@ static void *net_server_thread(void * /*arg*/)
     }
     handle_client(cfd, &cli);
   }
+
+  task_unregister("net");
+  g_net_running = false;
+  return nullptr;
 }
 
 /* ------------------------------------------------------------------ */

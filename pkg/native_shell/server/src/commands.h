@@ -41,5 +41,12 @@ void cmd_radio(int argc, char **argv);
 /* network */
 void cmd_net(int argc, char **argv);
 
+/* system */
+void cmd_list_tasks(int argc, char **argv);
+
+/* Background task registry */
+void task_register(const char *name, const char *desc);
+void task_unregister(const char *name);
+
 /* Ctrl+C interrupt flag — set by main's SIGINT handler or stdin polling */
 extern volatile sig_atomic_t g_shell_interrupt;

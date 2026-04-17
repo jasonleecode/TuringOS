@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <readline/history.h>
+#include <pthread.h>
 
 #include <l4/re/env>
 #include <l4/re/util/cap_alloc>
@@ -22,28 +23,29 @@
 
 shell_cmd commands[] = {
     /* general */
-    { "help",    "List available commands",              cmd_help    },
-    { "echo",    "Print arguments  [-n: no newline]",   cmd_echo    },
-    { "info",    "Print system information",             cmd_info    },
-    { "clear",   "Clear the screen",                    cmd_clear   },
-    { "history", "Show command history",                 cmd_history },
-    { "exit",    "Exit the shell",                      cmd_exit    },
+    { "help",       "List available commands",              cmd_help       },
+    { "echo",       "Print arguments  [-n: no newline]",   cmd_echo       },
+    { "info",       "Print system information",             cmd_info       },
+    { "clear",      "Clear the screen",                    cmd_clear      },
+    { "history",    "Show command history",                 cmd_history    },
+    { "exit",       "Exit the shell",                      cmd_exit       },
     /* filesystem */
-    { "pwd",     "Print working directory",              cmd_pwd     },
-    { "cd",      "Change directory  [dir]",              cmd_cd      },
-    { "ls",      "List directory    [dir]",              cmd_ls      },
-    { "cat",     "Print file        <file>",             cmd_cat     },
-    { "mkdir",   "Create directory  <dir>",              cmd_mkdir   },
-    { "rm",      "Remove file       <file>",             cmd_rm      },
+    { "pwd",        "Print working directory",              cmd_pwd        },
+    { "cd",         "Change directory  [dir]",              cmd_cd         },
+    { "ls",         "List directory    [dir]",              cmd_ls         },
+    { "cat",        "Print file        <file>",             cmd_cat        },
+    { "mkdir",      "Create directory  <dir>",              cmd_mkdir      },
+    { "rm",         "Remove file       <file>",             cmd_rm         },
     /* system */
-    { "uname",   "Print OS/arch info",                  cmd_uname   },
-    { "env",     "Print environment variables",          cmd_env     },
-    { "date",    "Print current date and time",          cmd_date    },
+    { "uname",      "Print OS/arch info",                  cmd_uname      },
+    { "env",        "Print environment variables",          cmd_env        },
+    { "date",       "Print current date and time",          cmd_date       },
+    { "list_tasks", "List background tasks",                cmd_list_tasks },
     /* hardware */
-    { "temp",    "Read DS18B20 temperature  [pin]",                 cmd_temp  },
-    { "radio",   "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
+    { "temp",       "Read DS18B20 temperature  [pin]",                 cmd_temp  },
+    { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
     /* network */
-    { "net",     "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net },
+    { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net },
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);
@@ -631,4 +633,70 @@ void cmd_radio(int argc, char **argv)
     }
 
     printf("radio: unknown subcommand '%s' — try 'radio help'\n", argv[1]);
+}
+
+/* ------------------------------------------------------------------ */
+/* Background task registry                                             */
+/* ------------------------------------------------------------------ */
+
+static constexpr int MAX_TASKS = 16;
+
+struct task_entry {
+    char name[32];
+    char desc[64];
+    bool active;
+};
+
+static task_entry   g_tasks[MAX_TASKS];
+static int          g_task_count = 0;
+static pthread_mutex_t g_task_mtx = PTHREAD_MUTEX_INITIALIZER;
+
+void task_register(const char *name, const char *desc)
+{
+    pthread_mutex_lock(&g_task_mtx);
+    for (int i = 0; i < g_task_count; i++) {
+        if (g_tasks[i].active && strcmp(g_tasks[i].name, name) == 0) {
+            pthread_mutex_unlock(&g_task_mtx);
+            return;
+        }
+    }
+    if (g_task_count < MAX_TASKS) {
+        snprintf(g_tasks[g_task_count].name, sizeof(g_tasks[0].name), "%s", name);
+        snprintf(g_tasks[g_task_count].desc, sizeof(g_tasks[0].desc), "%s", desc);
+        g_tasks[g_task_count].active = true;
+        g_task_count++;
+    }
+    pthread_mutex_unlock(&g_task_mtx);
+}
+
+void task_unregister(const char *name)
+{
+    pthread_mutex_lock(&g_task_mtx);
+    for (int i = 0; i < g_task_count; i++) {
+        if (g_tasks[i].active && strcmp(g_tasks[i].name, name) == 0) {
+            g_tasks[i].active = false;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_task_mtx);
+}
+
+void cmd_list_tasks(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    pthread_mutex_lock(&g_task_mtx);
+    bool any = false;
+    for (int i = 0; i < g_task_count; i++) {
+        if (g_tasks[i].active) {
+            if (!any) {
+                printf("%-16s  %s\n", "NAME", "DESCRIPTION");
+                printf("%-16s  %s\n", "----", "-----------");
+                any = true;
+            }
+            printf("%-16s  %s\n", g_tasks[i].name, g_tasks[i].desc);
+        }
+    }
+    if (!any)
+        printf("No background tasks running.\n");
+    pthread_mutex_unlock(&g_task_mtx);
 }
