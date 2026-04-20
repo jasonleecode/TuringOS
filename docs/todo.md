@@ -16,6 +16,19 @@
 
 ---
 
+## P0.5 — 上游同步（阻塞性）
+
+### 同步 l4re / kernel fork 分支
+
+fork 的 l4re 和 kernel（Fiasco）分支已落后于上游主分支，需要 merge 后才能继续追踪新功能和安全修复。
+
+- [ ] 确认当前 fork 落后的 commit 数量（`git log HEAD..upstream/main`）
+- [ ] merge 上游 l4re-core 变更，解决冲突，验证构建不回归
+- [ ] merge 上游 fiasco kernel 变更，验证 QEMU virt / BBB 启动正常
+- [ ] 更新 submodule 引用，提交到 TuringOS 主仓库
+
+---
+
 ## P1 — 核心系统服务
 
 ### 文件系统 / VFS
