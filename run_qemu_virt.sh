@@ -12,8 +12,10 @@ NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
 GPU_MODE=""      # GPU 模式：启用 ramfb + 显示输出
 VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
+CFG_NAME=""      # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
+SMP_CPUS=2       # 默认双核（Fiasco CONFIG_MP=y，最多16核）
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -50,18 +52,31 @@ while [[ $# -gt 0 ]]; do
             FB_RES="$2"
             shift 2
             ;;
+        --smp)
+            SMP_CPUS="$2"
+            shift 2
+            ;;
+        --cfg)
+            CFG_NAME="$2"; shift 2 ;;
+        --no-smp)
+            SMP_CPUS=1
+            shift
+            ;;
         --help|-h)
             echo ""
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  --no-net              禁用网络"
+            echo "  --cfg NAME            指定配置 (加载 bootstrap_NAME.elf，如 smp-test, fb-test)
+  --no-net              禁用网络"
             echo "  --net-shell           启用网络 (默认已启用)"
             echo "  --host-port PORT      主机转发端口 (默认 5555)"
             echo "  --gpu                 启用 GPU 调试 (ramfb + GTK 窗口，默认)"
             echo "  --vnc [PORT]          VNC 显示，可选端口 (默认 5900)"
             echo "  --gtk                 GTK 窗口显示 (需要本地桌面环境)"
             echo "  --fb-res WxH          帧缓冲分辨率 (默认 1280x720)"
+            echo "  --smp N               CPU 核心数 (默认 2，Fiasco 最多 16)"
+            echo "  --no-smp              单核模式"
             echo ""
             echo "示例:"
             echo "  $0                         # 带网络启动 (默认)"
@@ -94,13 +109,17 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- 查找镜像 ----
-BUILDS=(
-    "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-    "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-    "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
-    "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-    "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
-)
+if [ -n "$CFG_NAME" ]; then
+    BUILDS=("$PROJ_ROOT/build/l4re_virt/images/bootstrap_${CFG_NAME}.elf")
+else
+    BUILDS=(
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
+        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
+        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
+        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
+    )
+fi
 
 IMAGE=""
 for img in "${BUILDS[@]}"; do
@@ -206,6 +225,7 @@ if [ -n "$GPU_MODE" ]; then
 else
     echo "按 Ctrl-A X 退出 QEMU"
 fi
+echo "CPU 核心数: $SMP_CPUS"
 echo "------------------------------------------"
 
 # shellcheck disable=SC2086
@@ -213,6 +233,7 @@ $QEMU_ARCH \
     $MACHINE \
     $CPU \
     $MEM \
+    -smp "$SMP_CPUS" \
     -kernel "$IMAGE" \
     $DISPLAY_ARGS \
     $SERIAL_ARGS \

@@ -13,6 +13,8 @@
 | [✓] | 多启动项配置（modules.list 已有 native-shell / tcp-server / fb-test / fb-drv） |
 | [✓] | TCP echo server（lwip + virtio-net，QEMU NAT 转发验证通过） |
 
+更新,merge源repo
+
 ---
 
 ## P1 — 核心系统服务
