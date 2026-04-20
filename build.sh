@@ -401,8 +401,15 @@ build_bootstrap() {
         error "内核尚未编译，请先构建内核"
     fi
 
-    # 设置模块搜索路径: 内核构建目录 + 配置文件
-    export MODULE_SEARCH_PATH="$KERNEL_BUILD:$CONF_DIR"
+    # 设置模块搜索路径: 内核目录 + L4Re bin + L4Re lib + 配置文件
+    # bin 目录包含可执行文件，lib 包含共享库 (.so)
+    # 架构子目录名因板子不同，动态查找第一个存在的
+    local arch_bin arch_lib
+    arch_bin=$(find "$L4RE_BUILD/bin" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | head -1)
+    arch_lib=$(find "$L4RE_BUILD/lib" -mindepth 3 -maxdepth 3 -type d -path "*/std/l4f" 2>/dev/null | head -1)
+    arch_bin="${arch_bin:-$L4RE_BUILD/bin}"
+    arch_lib="${arch_lib:-$L4RE_BUILD/lib}"
+    export MODULE_SEARCH_PATH="$KERNEL_BUILD:${arch_bin}:${arch_lib}:$CONF_DIR"
 
     # 选择启动入口 (可通过环境变量 ENTRY 覆盖)
     # 可用入口: fiasco-base-test, shell, demo
