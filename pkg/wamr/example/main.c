@@ -10,6 +10,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
 
@@ -63,9 +64,17 @@ int main(void)
         return 1;
     }
 
-    /* 2. Load the WASM module from the embedded byte array */
-    mod = wasm_runtime_load((uint8_t *)wasm_add, sizeof(wasm_add),
-                            error, sizeof(error));
+    /* 2. Load the WASM module — wasm_runtime_load may modify the buffer
+     *    in place, so copy the const byte array to a heap buffer first. */
+    uint8_t *wasm_buf = (uint8_t *)malloc(sizeof(wasm_add));
+    if (!wasm_buf) {
+        printf("wamr-example: out of memory\n");
+        wasm_runtime_destroy();
+        return 1;
+    }
+    memcpy(wasm_buf, wasm_add, sizeof(wasm_add));
+
+    mod = wasm_runtime_load(wasm_buf, sizeof(wasm_add), error, sizeof(error));
     if (!mod) {
         printf("wamr-example: load failed: %s\n", error);
         rc = 1;
@@ -116,6 +125,7 @@ cleanup_module:
     wasm_runtime_unload(mod);
 cleanup_runtime:
     wasm_runtime_destroy();
+    free(wasm_buf);
 
     printf("wamr-example: %s\n", rc ? "FAILED" : "done");
     return rc;
