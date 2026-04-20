@@ -71,7 +71,14 @@ setup_board() {
         bbb)
             BOARD_NAME="BeagleBone Black (AM335x)"
             BOARD_ARCH="ARM"
-            export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
+            # 优先使用 /opt 下的 ARM GNU Toolchain 12.3 (需 GCC 11+，apt 默认 GCC 9 不够)
+            local _arm_opt_toolchain="/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin"
+            if [ -d "$_arm_opt_toolchain" ]; then
+                export PATH="$_arm_opt_toolchain:$PATH"
+                export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-linux-gnueabihf-}"
+            else
+                export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
+            fi
             # macOS: brew 安装的工具链不在默认 PATH 中
             local _arm_brew_prefix
             _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
