@@ -12,7 +12,7 @@ NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
 GPU_MODE=""      # GPU 模式：启用 ramfb + 显示输出
 VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
-GPU_DISPLAY=""   # 显示后端：vnc / gtk（默认 vnc）
+GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
 
 while [[ $# -gt 0 ]]; do
@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-net              禁用网络"
             echo "  --net-shell           启用网络 (默认已启用)"
             echo "  --host-port PORT      主机转发端口 (默认 5555)"
-            echo "  --gpu                 启用 GPU 调试 (ramfb + VNC 显示)"
+            echo "  --gpu                 启用 GPU 调试 (ramfb + GTK 窗口，默认)"
             echo "  --vnc [PORT]          VNC 显示，可选端口 (默认 5900)"
             echo "  --gtk                 GTK 窗口显示 (需要本地桌面环境)"
             echo "  --fb-res WxH          帧缓冲分辨率 (默认 1280x720)"
@@ -184,9 +184,9 @@ if [ -n "$GPU_MODE" ]; then
             echo "  分辨率: ${FB_RES}"
             ;;
         *)
-            DISPLAY_ARGS="-display vnc=127.0.0.1:0"
+            DISPLAY_ARGS="-display gtk"
             echo ""
-            echo "GPU 模式: ramfb + VNC (默认 :5900)"
+            echo "GPU 模式: ramfb + GTK 窗口 (默认)"
             ;;
     esac
 
