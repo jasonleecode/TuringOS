@@ -51,10 +51,10 @@ lwip 协议栈已集成，TCP echo server 可用。待完成：
 
 详细设计见 [fb-drv-design.md](fb-drv-design.md)。
 
-### wamr（WebAssembly 运行时）
+### wamr（WebAssembly 运行时）[✓]
 
-移植已完成，尚未运行验证。
-- 目标：在 native_shell 中执行一个 .wasm 文件，验证基本功能
+移植已完成，QEMU 验证通过：`add(40, 2) = 42`。
+修复：`wasm_runtime_load` 会就地修改 buffer，传 const 数组会 segfault，需先 malloc 拷贝。
 
 ### Shell 里启动程序
 
