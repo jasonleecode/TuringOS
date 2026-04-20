@@ -1,65 +1,108 @@
 # TuringOS 待办事项
 
-按优先级排列。
+> 按优先级排列，`[✓]` 表示已完成。
 
+---
 
+## P0 — 核心基础
 
-## P0 — 基础可用性
+| 状态 | 任务 |
+|------|------|
+| [✓] | 用户态 Shell（native_shell，含 readline、历史记录） |
+| [✓] | 构建系统包发现机制（Control 文件、PKGDIR 层级、sync_pkg_symlinks） |
+| [✓] | 多启动项配置（modules.list 已有 native-shell / tcp-server / fb-test / fb-drv） |
+| [✓] | TCP echo server（lwip + virtio-net，QEMU NAT 转发验证通过） |
 
-### 用户态 Shell
-
+---
 
 ## P1 — 核心系统服务
 
-### 文件系统服务
+### 文件系统 / VFS
 
-有 emmc-driver 和 nvme-driver 块设备驱动，但没有文件系统层。需要一个 VFS server 将块设备暴露为文件接口，否则存储驱动读出的数据无人消费。
-备注：我看有ROMFS,看看这个怎么使用起来。
+有 emmc-driver、nvme-driver 块设备驱动，但缺少文件系统层。
+- 近期目标：调研 ROMFS 用法，搞清楚如何挂载只读根文件系统
+- 中期目标：VFS server，将块设备暴露为文件接口（参考 L4Re devfs）
 
-### 网络栈
+### 网络栈完善
 
-有 virtio-net 驱动和 virtio-net-switch，
-lwip协议栈已经有了，看看接下来还有哪些其他的需要优化的。
+lwip 协议栈已集成，TCP echo server 可用。待完成：
+- `ifconfig` / `ping` 等 net tools 集成到 native_shell
+- UDP 支持验证
+- DNS 解析
+
+### 日志系统
+
+当前各组件直接用 `printf` 输出，缺乏统一日志级别和持久化。
+- 目标：实现简单的日志服务（severity 过滤、时间戳、可选写入存储）
+
+---
 
 ## P2 — 功能扩展
 
-### 更多启动项配置
+### 显示子系统
 
-`conf/modules.list` 当前只有 `fiasco-base-test` 一个 entry。需要为不同驱动组合添加独立的启动项（如 emmc 测试、uvmm 虚拟机等），方便开发和测试。
+| 状态 | 子任务 |
+|------|------|
+| [✓] | fb-test：帧缓冲测试应用，QEMU ramfb 验证通过 |
+| [✓] | fb-drv 第一阶段：用户态 Goos 代理服务器，client 通过 IPC 访问帧缓冲 |
+| 待做 | fb-drv 第二阶段：多客户端 virtual buffer + 合成（轻量窗口管理器基础） |
+| 待做 | fb-drv 第三阶段：RPi4 HDMI 真实硬件路径（BCM2711 mailbox） |
+| 待做 | 简单 GUI 框架（基于 fb-drv 第二阶段） |
+
+详细设计见 [fb-drv-design.md](fb-drv-design.md)。
+
+### wamr（WebAssembly 运行时）
+
+移植已完成，尚未运行验证。
+- 目标：在 native_shell 中执行一个 .wasm 文件，验证基本功能
+
+### Shell 里启动程序
+
+目前 native_shell 只能运行内置命令，不能 fork/exec 其他 L4Re 任务。
+- 目标：通过 ned 或类似机制，在 shell 中动态启动已加载到 ROM 的程序
 
 ### 设备树支持
 
-有 libfdt 库但没有 `.dts`/`.dtb` 文件或构建流程。RPi4 和 BBB 都依赖设备树，当前 bootstrap 使用硬编码平台配置。要支持更多外设需要打通 DT 编译和加载流程。
+有 libfdt 库，但无 .dts/.dtb 文件和构建流程。RPi4 / BBB 依赖设备树。
+- 目标：补充 dts 文件、打通 dtc 编译流程、bootstrap 加载 DTB
 
+### 多核心任务调度
 
-### 参考qnx的代码
+Fiasco 支持 SMP，尚未测试多核场景。
+- 目标：在 QEMU virt（-smp 2）下测试任务跨核调度，验证 IPC 在多核下的正确性
 
-实现一个驱动框架；POSIX兼容；Shell；
+---
 
-## P0 — 构建系统
+## P3 — 长期目标
 
-### 包发现机制 [已修复]
+### POSIX 兼容层
 
-**问题根因**（已解决）：
-1. 新增 `pkg/<name>/` 时必须提供 `Control` 文件，否则 project.mk 报错并跳过该包。
-2. `PKGDIR` 路径层级必须正确：`server/src/Makefile` 用 `../..`（指向包根），`server/Makefile` 用 `..`，顶层 `Makefile` 用 `.`。
-3. 单独构建某包的正确命令：`make -C build/l4re_virt pkg/<name>`（不是 `PKGS=`）。
-4. `build.sh` 已提取 `sync_pkg_symlinks()` 函数，每次 `build_l4re` 调用前自动同步符号链接，新增包无需手动操作。
+参考 QNX 设计，在 L4Re 之上提供 POSIX 接口（进程、信号、文件描述符）。
+涉及：驱动框架统一、libc 集成、syscall 适配。
 
-**添加新包的步骤**：
-- 创建 `pkg/<name>/Control`（列出所有 `REQUIRES_LIBS` 依赖）
-- 确保 Makefile 的 `PKGDIR` 层级正确
-- 运行 `./build.sh --board virt l4re` 或 `make -C build/l4re_virt pkg/<name>`
+### 终端登录
 
-## P3 - 当前需要改进的内容
+用户名 / 密码认证，串口或 VNC 终端登录界面。
 
-1. 测试多核心任务调度；
-2. 设备驱动 ftd，tree，VFS挂载
-3. 网络驱动和应用，net tools，ifconfig 和 ping 
-4. wamr已经完成移植，需要运行起来验证
-5. shell里启动程序
-6. 日志系统
-7. 存储操作和文件系统
-8. 显卡驱动、fb-test、fb-drv与GUI
-9. 终端用户名和密码登录
-10. 功耗与电源管理，pkg/acpica
+### 功耗与电源管理
+
+`pkg/acpica` 已集成 ACPI 解释器。
+- 短期：了解 ACPICA 初始化流程，能读取 ACPI 表
+- 注意：BBB / RPi4 无标准 ACPI，该功能主要面向 x86 平台
+
+### BBB（BeagleBone Black）硬件验证
+
+AM335x 平台适配代码已完成（时钟初始化、UART、I2C、RTC、GPIO）。
+开发板不在身边，待上电验证。详见 [beaglebone_black.md](beaglebone_black.md)。
+
+---
+
+## 参考：构建系统规则
+
+添加新包 `pkg/<name>/` 的正确步骤：
+
+1. 创建 `pkg/<name>/Control`，列出所有 `REQUIRES_LIBS` 依赖
+2. Makefile 的 `PKGDIR` 层级：顶层用 `.`，`server/` 用 `..`，`server/src/` 用 `../..`
+3. 编译：`make -C build/l4re_virt pkg/<name>`（不要用 `PKGS=` 变量）
+4. `build.sh` 会自动同步 `l4mk/pkg/` 符号链接，无需手动 `ln -s`
+5. 运行镜像：在 `l4mk/conf/modules.list` 添加 entry，用 `E=<entry> elfimage` 打包
