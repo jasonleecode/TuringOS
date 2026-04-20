@@ -36,6 +36,21 @@ lwip协议栈已经有了，看看接下来还有哪些其他的需要优化的�
 
 实现一个驱动框架；POSIX兼容；Shell；
 
+## P0 — 构建系统
+
+### 包发现机制 [已修复]
+
+**问题根因**（已解决）：
+1. 新增 `pkg/<name>/` 时必须提供 `Control` 文件，否则 project.mk 报错并跳过该包。
+2. `PKGDIR` 路径层级必须正确：`server/src/Makefile` 用 `../..`（指向包根），`server/Makefile` 用 `..`，顶层 `Makefile` 用 `.`。
+3. 单独构建某包的正确命令：`make -C build/l4re_virt pkg/<name>`（不是 `PKGS=`）。
+4. `build.sh` 已提取 `sync_pkg_symlinks()` 函数，每次 `build_l4re` 调用前自动同步符号链接，新增包无需手动操作。
+
+**添加新包的步骤**：
+- 创建 `pkg/<name>/Control`（列出所有 `REQUIRES_LIBS` 依赖）
+- 确保 Makefile 的 `PKGDIR` 层级正确
+- 运行 `./build.sh --board virt l4re` 或 `make -C build/l4re_virt pkg/<name>`
+
 ## P3 - 当前需要改进的内容
 
 1. 测试多核心任务调度；
@@ -45,5 +60,6 @@ lwip协议栈已经有了，看看接下来还有哪些其他的需要优化的�
 5. shell里启动程序
 6. 日志系统
 7. 存储操作和文件系统
-8. 显卡驱动与GUI
+8. 显卡驱动、fb-test、fb-drv与GUI
 9. 终端用户名和密码登录
+10. 功耗与电源管理，pkg/acpica

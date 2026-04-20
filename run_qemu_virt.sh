@@ -10,6 +10,10 @@ PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # ---- 命令行参数解析 ----
 NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
+GPU_MODE=""      # GPU 模式：启用 ramfb + 显示输出
+VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
+GPU_DISPLAY=""   # 显示后端：vnc / gtk（默认 vnc）
+FB_RES="1280x720" # 帧缓冲分辨率
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -25,19 +29,55 @@ while [[ $# -gt 0 ]]; do
             HOST_PORT="$2"
             shift 2
             ;;
+        --gpu)
+            GPU_MODE="ramfb"
+            GPU_DISPLAY="${GPU_DISPLAY:-vnc}"
+            shift
+            ;;
+        --vnc)
+            GPU_DISPLAY="vnc"
+            if [[ "$2" =~ ^[0-9]+$ ]]; then
+                VNC_PORT="$2"
+                shift
+            fi
+            shift
+            ;;
+        --gtk)
+            GPU_DISPLAY="gtk"
+            shift
+            ;;
+        --fb-res)
+            FB_RES="$2"
+            shift 2
+            ;;
         --help|-h)
             echo ""
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  --no-net          禁用网络"
-            echo "  --net-shell       启用网络 (默认已启用)"
-            echo "  --host-port PORT  主机转发端口 (默认 5555)"
+            echo "  --no-net              禁用网络"
+            echo "  --net-shell           启用网络 (默认已启用)"
+            echo "  --host-port PORT      主机转发端口 (默认 5555)"
+            echo "  --gpu                 启用 GPU 调试 (ramfb + VNC 显示)"
+            echo "  --vnc [PORT]          VNC 显示，可选端口 (默认 5900)"
+            echo "  --gtk                 GTK 窗口显示 (需要本地桌面环境)"
+            echo "  --fb-res WxH          帧缓冲分辨率 (默认 1280x720)"
             echo ""
             echo "示例:"
-            echo "  $0                     # 带网络启动 (默认)"
-            echo "  $0 --no-net            # 不带网络启动"
-            echo "  $0 --host-port 8080    # 自定义转发端口"
+            echo "  $0                         # 带网络启动 (默认)"
+            echo "  $0 --no-net                # 不带网络启动"
+            echo "  $0 --host-port 8080        # 自定义转发端口"
+            echo "  $0 --gpu                   # GPU 调试，VNC 监听 :5900"
+            echo "  $0 --gpu --vnc 5901        # GPU 调试，VNC 监听 :5901"
+            echo "  $0 --gpu --gtk             # GPU 调试，GTK 窗口"
+            echo "  $0 --gpu --fb-res 1920x1080 # 1080p 帧缓冲"
+            echo ""
+            echo "GPU 调试说明:"
+            echo "  --gpu 模式启用 QEMU ramfb 设备，bootstrap 自动配置帧缓冲。"
+            echo "  L4Re 通过 'vesa' capability 访问帧缓冲 (由 MOE 从 VBE 信息注册)。"
+            echo "  使用 conf/fb-test.cfg 运行帧缓冲测试:"
+            echo "    ./build.sh --board virt all"
+            echo "    $0 --gpu  (另一终端连接 VNC: vncviewer localhost:5900)"
             echo ""
             echo "TCP server 测试:"
             echo "  1. 先构建: make -C build/l4re_virt PKGS=native_shell"
@@ -116,12 +156,56 @@ if [ "$NET_MODE" = "shell" ]; then
     echo "  python3 tools/tcp_client.py --port ${HOST_PORT}"
 fi
 
+# ---- GPU / 显示参数 ----
+GPU_ARGS=""
+DISPLAY_ARGS="-nographic"
+SERIAL_ARGS="-serial mon:stdio"
+
+if [ -n "$GPU_MODE" ]; then
+    # ramfb: QEMU 将帧缓冲暴露给 fw_cfg，bootstrap 自动检测并初始化
+    # 分辨率通过 fw_cfg "opt/org.l4re/fb_res" 传递
+    GPU_ARGS="-device ramfb -fw_cfg name=opt/org.l4re/fb_res,string=${FB_RES}"
+
+    case "$GPU_DISPLAY" in
+        vnc)
+            VNC_IDX=$(( VNC_PORT - 5900 ))
+            DISPLAY_ARGS="-display vnc=127.0.0.1:${VNC_IDX}"
+            echo ""
+            echo "GPU 模式: ramfb + VNC"
+            echo "  分辨率 : ${FB_RES}"
+            echo "  VNC 端口: ${VNC_PORT} (显示 :${VNC_IDX})"
+            echo "  连接命令: vncviewer localhost:${VNC_PORT}"
+            echo "           或 vncviewer localhost::${VNC_PORT}"
+            ;;
+        gtk)
+            DISPLAY_ARGS="-display gtk"
+            echo ""
+            echo "GPU 模式: ramfb + GTK 窗口"
+            echo "  分辨率: ${FB_RES}"
+            ;;
+        *)
+            DISPLAY_ARGS="-display vnc=127.0.0.1:0"
+            echo ""
+            echo "GPU 模式: ramfb + VNC (默认 :5900)"
+            ;;
+    esac
+
+    # GPU 模式下 serial 单独走 stdio（不用 mon:stdio 以免干扰显示）
+    SERIAL_ARGS="-serial stdio -monitor none"
+
+    echo "  启动配置: 使用 conf/fb-test.cfg 测试帧缓冲"
+fi
+
 echo ""
 echo "使用架构: $MACHINE_TYPE"
 echo "镜像路径: $IMAGE"
 echo ""
 echo "启动 L4Re 系统..."
-echo "按 Ctrl-A X 退出 QEMU"
+if [ -n "$GPU_MODE" ]; then
+    echo "按 Ctrl-C 退出 QEMU"
+else
+    echo "按 Ctrl-A X 退出 QEMU"
+fi
 echo "------------------------------------------"
 
 # shellcheck disable=SC2086
@@ -130,6 +214,7 @@ $QEMU_ARCH \
     $CPU \
     $MEM \
     -kernel "$IMAGE" \
-    -nographic \
-    -serial mon:stdio \
+    $DISPLAY_ARGS \
+    $SERIAL_ARGS \
+    $GPU_ARGS \
     $NET_ARGS

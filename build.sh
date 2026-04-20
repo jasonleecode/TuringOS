@@ -27,6 +27,11 @@
 # 快速开始 (QEMU 测试):
 #   ./build.sh --board virt all     # 构建
 #   ./run_qemu_virt.sh              # 运行
+#
+# 单独构建某个包 (新增包时):
+#   新增 pkg/<name>/ 后不需要手动处理符号链接, build.sh 会自动同步.
+#   单独重编某包: make -C build/l4re_virt pkg/<name>
+#   注意: 不要用 PKGS= 变量, 正确方式是把包名作为 make 目标.
 
 set -e
 
@@ -225,25 +230,31 @@ build_kernel() {
 # ============================================================
 # 构建 L4Re 运行时环境
 # ============================================================
-build_l4re() {
-    info "构建 L4Re 运行时环境..."
-
-    local l4mk_dir="$PROJ_ROOT/l4mk"
-
-    # 在 l4mk/pkg/ 下创建指向 l4re-core 和 pkg/ 下各包的符号链接
+# 同步 pkg/ 下所有包到 l4mk/pkg/ 的符号链接
+# 必须在每次构建前调用，确保新增包能被构建系统发现
+sync_pkg_symlinks() {
     local l4mk_pkg="$PROJ_ROOT/l4mk/pkg"
     if [ ! -e "$l4mk_pkg/l4re-core" ]; then
         ln -s ../../l4re "$l4mk_pkg/l4re-core"
         info "创建符号链接: l4mk/pkg/l4re-core -> ../../l4re"
     fi
-    # 为 pkg/ 下每个包逐个创建符号链接
     for pkg_dir in "$PROJ_ROOT"/pkg/*/; do
-        local pkg_name="$(basename "$pkg_dir")"
+        local pkg_name
+        pkg_name="$(basename "$pkg_dir")"
         if [ ! -e "$l4mk_pkg/$pkg_name" ]; then
             ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
             info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
         fi
     done
+}
+
+build_l4re() {
+    info "构建 L4Re 运行时环境..."
+
+    local l4mk_dir="$PROJ_ROOT/l4mk"
+
+    # 确保所有 pkg/ 下的包都已链接到 l4mk/pkg/（新增包无需手动操作）
+    sync_pkg_symlinks
 
     # project.mk 的 find 命令不会跟随符号链接来发现 prj-config/aliases.d,
     # 需要将各子项目的别名文件合并到 l4mk/mk/aliases.d/ (该目录已在搜索路径中).
