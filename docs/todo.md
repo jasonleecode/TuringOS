@@ -12,8 +12,7 @@
 | [✓] | 构建系统包发现机制（Control 文件、PKGDIR 层级、sync_pkg_symlinks） |
 | [✓] | 多启动项配置（modules.list 已有 native-shell / tcp-server / fb-test / fb-drv） |
 | [✓] | TCP echo server（lwip + virtio-net，QEMU NAT 转发验证通过） |
-
-更新,merge源repo
+| [✓] | SMP 双核默认（run_qemu_virt.sh -smp 2，smp-test PASSED） |
 
 ---
 
@@ -68,10 +67,11 @@ lwip 协议栈已集成，TCP echo server 可用。待完成：
 有 libfdt 库，但无 .dts/.dtb 文件和构建流程。RPi4 / BBB 依赖设备树。
 - 目标：补充 dts 文件、打通 dtc 编译流程、bootstrap 加载 DTB
 
-### 多核心任务调度
+### 多核心任务调度 [✓]
 
-Fiasco 支持 SMP，尚未测试多核场景。
-- 目标：在 QEMU virt（-smp 2）下测试任务跨核调度，验证 IPC 在多核下的正确性
+QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity 固定，
+完成 10 万次计数后原子信号 CPU0，输出 PASSED。
+run_qemu_virt.sh 默认已改为双核启动，支持 `--cfg smp-test` 选择镜像。
 
 ---
 
