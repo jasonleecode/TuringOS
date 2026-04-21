@@ -16,6 +16,7 @@ CFG_NAME=""      # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
 SMP_CPUS=2       # 默认双核（Fiasco CONFIG_MP=y，最多16核）
+DISK_SIZE="100M" # 虚拟磁盘大小（设为空字符串禁用磁盘）
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -62,6 +63,14 @@ while [[ $# -gt 0 ]]; do
             SMP_CPUS=1
             shift
             ;;
+        --disk)
+            DISK_SIZE="$2"
+            shift 2
+            ;;
+        --no-disk)
+            DISK_SIZE=""
+            shift
+            ;;
         --help|-h)
             echo ""
             echo "用法: $0 [选项]"
@@ -77,11 +86,15 @@ while [[ $# -gt 0 ]]; do
             echo "  --fb-res WxH          帧缓冲分辨率 (默认 1280x720)"
             echo "  --smp N               CPU 核心数 (默认 2，Fiasco 最多 16)"
             echo "  --no-smp              单核模式"
+            echo "  --disk SIZE           虚拟磁盘大小 (默认 100M，如 512M, 1G)"
+            echo "  --no-disk             禁用虚拟磁盘"
             echo ""
             echo "示例:"
             echo "  $0                         # 带网络启动 (默认)"
             echo "  $0 --no-net                # 不带网络启动"
             echo "  $0 --host-port 8080        # 自定义转发端口"
+            echo "  $0 --disk 512M             # 512MB 虚拟磁盘"
+            echo "  $0 --no-disk               # 禁用虚拟磁盘"
             echo "  $0 --gpu                   # GPU 调试，VNC 监听 :5900"
             echo "  $0 --gpu --vnc 5901        # GPU 调试，VNC 监听 :5901"
             echo "  $0 --gpu --gtk             # GPU 调试，GTK 窗口"
@@ -215,6 +228,28 @@ if [ -n "$GPU_MODE" ]; then
     echo "  启动配置: 使用 conf/fb-test.cfg 测试帧缓冲"
 fi
 
+# ---- 磁盘参数 ----
+DISK_ARGS=""
+DISK_IMAGE="$PROJ_ROOT/build/virt_disk.img"
+
+if [ -n "$DISK_SIZE" ]; then
+    # 创建虚拟磁盘（如果不存在）
+    if [ ! -f "$DISK_IMAGE" ]; then
+        echo ""
+        echo "创建虚拟磁盘: $DISK_IMAGE ($DISK_SIZE)"
+        mkdir -p "$(dirname "$DISK_IMAGE")"
+        qemu-img create -f raw "$DISK_IMAGE" "$DISK_SIZE"
+        echo "虚拟磁盘创建完成"
+    fi
+
+    # 添加 VirtIO 块设备
+    DISK_ARGS="-drive if=virtio,file=$DISK_IMAGE,format=raw"
+    echo ""
+    echo "磁盘设备: VirtIO Block"
+    echo "  磁盘路径: $DISK_IMAGE"
+    echo "  磁盘大小: $DISK_SIZE"
+fi
+
 echo ""
 echo "使用架构: $MACHINE_TYPE"
 echo "镜像路径: $IMAGE"
@@ -238,4 +273,5 @@ $QEMU_ARCH \
     $DISPLAY_ARGS \
     $SERIAL_ARGS \
     $GPU_ARGS \
-    $NET_ARGS
+    $NET_ARGS \
+    $DISK_ARGS
