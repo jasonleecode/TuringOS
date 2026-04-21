@@ -1,2 +1,2 @@
-provides: liblwext4
-requires: libc stdlibs
+provides: liblwext4 ext4fs
+requires: libc stdlibs libio-vbus cxx_libc_io cxx_io libstdc++ l4util libsigma0
