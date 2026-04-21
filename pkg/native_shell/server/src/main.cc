@@ -8,7 +8,12 @@
 #include <readline/readline.h>
 #include <readline/history.h>
 #include <l4/devfs/devfs.h>
+#include <l4/re/env>
+#include <l4/re/l4aux.h>
 #include "commands.h"
+#include "shell_exec.h"
+
+l4re_aux_t const *l4re_aux = nullptr;
 
 extern void setup_devices();
 
@@ -137,8 +142,19 @@ static char **shell_completion(const char *text, int start, int end)
     return nullptr;
 }
 
-int main()
+int main(int argc, char const* const* argv)
 {
+    // Parse the AUX vector (follows envp in the startup stack) to get l4re_aux.
+    auto auxp = &argv[argc] + 1;
+    while (*auxp) ++auxp;   // skip past envp
+    ++auxp;                  // skip past envp's NULL
+    auto *sentinel = reinterpret_cast<char const*>(0xf0);
+    while (*auxp) {
+        if (*auxp == sentinel)
+            l4re_aux = reinterpret_cast<l4re_aux_t const*>(auxp[1]);
+        auxp += 2;
+    }
+
     /* Start stdin monitor thread (detached, runs for shell lifetime) */
     pthread_t mon;
     pthread_attr_t attr;
@@ -153,6 +169,16 @@ int main()
     setup_devices();
     net_auto_init();
 
+    // Initialize shell-exec: set up programs library
+    auto* env = L4Re::Env::env();
+    auto programs_ns = env->get_cap<L4Re::Namespace>("programs");
+    if (programs_ns.is_valid()) {
+        File_resolver::set_programs_library(programs_ns);
+        printf("shell-exec: Programs library initialized\n");
+    } else {
+        printf("shell-exec: Programs library not available\n");
+    }
+
     signal(SIGINT, handle_sigint);
     rl_catch_signals             = 1;
     rl_getc_function             = rl_getc_buf;
@@ -162,8 +188,8 @@ int main()
     printf("Type 'help' for available commands.\n\n");
 
     char  *line = nullptr;
-    char  *argv[MAX_ARGS];
-    int    argc;
+    char  *cmd_argv[MAX_ARGS];
+    int    cmd_argc;
 
     for (;;) {
         g_shell_interrupt  = 0;
@@ -192,8 +218,8 @@ int main()
         if (*line)
             add_history(line);
 
-        argc = parse_line(line, argv, MAX_ARGS);
-        if (argc == 0) {
+        cmd_argc = parse_line(line, cmd_argv, MAX_ARGS);
+        if (cmd_argc == 0) {
             free(line); line = nullptr;
             continue;
         }
@@ -203,14 +229,14 @@ int main()
 
         bool found = false;
         for (int i = 0; i < num_commands; i++) {
-            if (strcmp(argv[0], commands[i].name) == 0) {
-                commands[i].func(argc, argv);
+            if (strcmp(cmd_argv[0], commands[i].name) == 0) {
+                commands[i].func(cmd_argc, cmd_argv);
                 found = true;
                 break;
             }
         }
         if (!found)
-            printf("%s: command not found\n", argv[0]);
+            printf("%s: command not found\n", cmd_argv[0]);
 
         g_cmd_running = false;
 

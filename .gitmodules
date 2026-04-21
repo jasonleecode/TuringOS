@@ -81,3 +81,6 @@
 [submodule "pkg/wamr"]
 	path = pkg/wamr
 	url = git@github.com:jasonleecode/wasm-micro-runtime.git
+[submodule "pkg/filesystem/ext4/contrib"]
+	path = pkg/filesystem/ext4/contrib
+	url = https://github.com/gkostka/lwext4.git

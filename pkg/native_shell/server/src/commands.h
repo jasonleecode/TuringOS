@@ -34,6 +34,9 @@ void cmd_uname(int argc, char **argv);
 void cmd_env(int argc, char **argv);
 void cmd_date(int argc, char **argv);
 
+/* program execution */
+void cmd_run(int argc, char **argv);
+
 /* hardware */
 void cmd_temp(int argc, char **argv);
 void cmd_radio(int argc, char **argv);

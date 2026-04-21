@@ -20,6 +20,7 @@
 #include <l4/tef6686hn/tef6686hn.h>
 
 #include "commands.h"
+#include "shell_exec.h"
 
 shell_cmd commands[] = {
     /* general */
@@ -41,6 +42,8 @@ shell_cmd commands[] = {
     { "env",        "Print environment variables",          cmd_env        },
     { "date",       "Print current date and time",          cmd_date       },
     { "list_tasks", "List background tasks",                cmd_list_tasks },
+    /* program execution */
+    { "run",        "Execute a program  <rom/xxx|xxx>",     cmd_run        },
     /* hardware */
     { "temp",       "Read DS18B20 temperature  [pin]",                 cmd_temp  },
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
@@ -700,4 +703,49 @@ void cmd_list_tasks(int argc, char **argv)
     if (!any)
         printf("No background tasks running.\n");
     pthread_mutex_unlock(&g_task_mtx);
+}
+
+/* ------------------------------------------------------------------ */
+/* Program execution commands                                            */
+/* ------------------------------------------------------------------ */
+
+void cmd_run(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: run <program> [args...]\n");
+        printf("  run rom/hello         - Run from ROM\n");
+        printf("  run hello             - Run from ROM (short form)\n");
+        printf("  run /path/to/prog     - Run from ext4 (future)\n");
+        return;
+    }
+
+    const char *program = argv[1];
+
+    printf("[cmd_run] Attempting to run: %s\n", program);
+
+    // 创建任务管理器
+    static Simple_task_manager task_manager;
+
+    // 解析参数
+    char *const *exec_argv = &argv[1];
+
+    // 使用当前环境变量
+    extern char **environ;
+    char *const *exec_envp = environ;
+
+    // 启动任务
+    auto *task = task_manager.spawn(program, exec_argv, exec_envp);
+
+    if (!task) {
+        printf("run: failed to start %s\n", program);
+        return;
+    }
+
+    printf("run: task started successfully: %s (task_cap=%lu)\n",
+           program, task->task_cap);
+
+    // 同步等待任务完成（MVP 行为）
+    int exit_code = task_manager.wait(task);
+
+    printf("run: task exited with code: %d\n", exit_code);
 }

@@ -241,9 +241,22 @@ sync_pkg_symlinks() {
     for pkg_dir in "$PROJ_ROOT"/pkg/*/; do
         local pkg_name
         pkg_name="$(basename "$pkg_dir")"
-        if [ ! -e "$l4mk_pkg/$pkg_name" ]; then
-            ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
-            info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
+        if [ ! -f "${pkg_dir}Control" ]; then
+            # 命名空间目录（如 pkg/filesystem/）：遍历其下的子包
+            for subpkg_dir in "${pkg_dir}"*/; do
+                [ -f "${subpkg_dir}Control" ] || continue
+                local subpkg_name
+                subpkg_name="$(basename "$subpkg_dir")"
+                if [ ! -e "$l4mk_pkg/$subpkg_name" ]; then
+                    ln -s "../../pkg/$pkg_name/$subpkg_name" "$l4mk_pkg/$subpkg_name"
+                    info "创建符号链接: l4mk/pkg/$subpkg_name -> ../../pkg/$pkg_name/$subpkg_name"
+                fi
+            done
+        else
+            if [ ! -e "$l4mk_pkg/$pkg_name" ]; then
+                ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
+                info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
+            fi
         fi
     done
 }
