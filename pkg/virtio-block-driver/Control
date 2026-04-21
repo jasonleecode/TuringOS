@@ -1,0 +1,2 @@
+requires: libblock-device libio-vbus stdlibs l4virtio
+maintainer: jasonlee@turingos.org
