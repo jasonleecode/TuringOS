@@ -1,2 +1,2 @@
-requires: libblock-device libio-vbus stdlibs l4virtio
+requires: libblock-device libio-vbus
 maintainer: jasonlee@turingos.org

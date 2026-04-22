@@ -1,35 +1,42 @@
 /*
- * Debug utilities for VirtIO block driver
  * Copyright (c) 2026 Jason Lee <jasonlee@turingos.org>
+ * License: MIT
  */
+#pragma once
 
-#ifndef DEBUG_H
-#define DEBUG_H
+#include <l4/re/util/debug>
 
-#include <cstdio>
-#include <l4/libblock-device/debug.h>
-
-namespace Dbg {
-
-enum Level
+struct Err : L4Re::Util::Err
 {
-  Error,
-  Warn,
-  Info,
-  Trace,
-  Debug
+  explicit Err(Level l = Normal) : L4Re::Util::Err(l, "VIRTIO-BLK") {}
 };
 
-static inline void set_level(Level level)
+class Dbg : public L4Re::Util::Dbg
 {
-  Block_device::Dbg::set_level(static_cast<Block_device::Dbg::Level>(level));
-}
+public:
+  enum Level
+  {
+    Warn      = 1,
+    Info      = 2,
+    Trace     = 4,
+    Steptrace = 8
+  };
 
-static inline Level get_level()
+  Dbg(unsigned long l = Info, char const *subsys = "")
+  : L4Re::Util::Dbg(l, "VIRTIO-BLK", subsys) {}
+
+  static Dbg warn(char const *subsys = "")  { return Dbg(Warn,      subsys); }
+  static Dbg info(char const *subsys = "")  { return Dbg(Info,      subsys); }
+  static Dbg trace(char const *subsys = "") { return Dbg(Trace,     subsys); }
+};
+
+using Err_blockdev = Err;
+
+struct Dbg_blockdev : L4Re::Util::Dbg
 {
-  return static_cast<Level>(Block_device::Dbg::get_level());
-}
+  Dbg_blockdev(unsigned long l, char const *subsys)
+  : L4Re::Util::Dbg(l, "VIRTIO-BLK", subsys) {}
+};
 
-} // namespace Dbg
-
-#endif // DEBUG_H
+#define LIBBLOCKDEV_DEBUG_ERR Err_blockdev
+#define LIBBLOCKDEV_DEBUG_DBG Dbg_blockdev

@@ -89,3 +89,18 @@ module tcp-server.cfg
 module virt-net.io
 module io
 module tcp_server
+
+# ------------------------------------------------------------
+# Entry: virt-blk - VirtIO block driver test
+# ------------------------------------------------------------
+entry virt-blk
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/virt-blk.cfg
+module l4re
+module ned
+module virt-blk.cfg
+module virt-blk.io
+module io
+module virtio-block-driver

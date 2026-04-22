@@ -176,7 +176,7 @@ fi
 # ---- 网络参数 ----
 NET_ARGS=""
 if [ "$NET_MODE" = "shell" ]; then
-    NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${HOST_PORT}-:5000 -device virtio-net-device,netdev=net0"
+    NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${HOST_PORT}-:5000 -device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.0"
     echo ""
     echo "网络模式: 用户 NAT (slirp)"
     echo "  客户机 IP : 10.0.2.15"
@@ -242,8 +242,8 @@ if [ -n "$DISK_SIZE" ]; then
         echo "虚拟磁盘创建完成"
     fi
 
-    # 添加 VirtIO 块设备
-    DISK_ARGS="-drive if=virtio,file=$DISK_IMAGE,format=raw"
+    # 添加 VirtIO 块设备 (virtio-mmio transport, not PCIe)
+    DISK_ARGS="-drive if=none,id=vdisk,file=$DISK_IMAGE,format=raw -device virtio-blk-device,drive=vdisk,bus=virtio-mmio-bus.1"
     echo ""
     echo "磁盘设备: VirtIO Block"
     echo "  磁盘路径: $DISK_IMAGE"
