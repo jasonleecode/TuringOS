@@ -1,5 +1,5 @@
 /*
- * ext4fs server for TuringOS – Phase 2
+ * ext4fs server for TuringOS – Phase 3b
  * Copyright (c) 2026 Jason Lee <jasonlee@turingos.org>
  * License: MIT
  *
@@ -10,8 +10,10 @@
  *   1. Connects to virtio-block-driver via the "blk" factory cap.
  *   2. Formats the disk with ext4 if no superblock is present.
  *   3. Mounts the filesystem at "/".
- *   4. Runs a quick write/read self-test.
- *   5. Idles (keeps the mount point alive for future use).
+ *   4. Runs a quick write/read self-test (creates /hello.txt).
+ *   5. Registers an L4Re::Namespace server on the "svr" capability so other
+ *      tasks can open ext4 files via standard POSIX fopen()/fread().
+ *   6. Enters the IPC dispatch loop (filesystem stays mounted).
  */
 
 #include <stdio.h>
@@ -21,6 +23,8 @@
 #include <l4/re/env>
 #include <l4/re/error_helper>
 #include <l4/l4virtio/l4virtio>
+#include <l4/re/util/br_manager>
+#include <l4/re/util/object_registry>
 
 extern "C" {
 #include <ext4_errno.h>
@@ -29,6 +33,7 @@ extern "C" {
 }
 
 #include "virtio_blockdev.h"
+#include "ext4_ns.h"
 
 static const char *const DEV_NAME    = "virtio-blk0";
 static const char *const MOUNT_POINT = "/";
@@ -99,6 +104,11 @@ static int run_io_test()
     return 0;
 }
 
+// ----- Server -----
+
+static L4Re::Util::Registry_server<L4Re::Util::Br_manager_hooks> server;
+static Ext4_namespace ext4_ns;
+
 // ----- main -----
 
 int main(int /*argc*/, char const *const * /*argv*/)
@@ -151,21 +161,27 @@ int main(int /*argc*/, char const *const * /*argv*/)
     }
     printf("[ext4] Mounted %s at %s\n", DEV_NAME, MOUNT_POINT);
 
-    // Run a quick write/read self-test.
+    // Run a quick write/read self-test (creates /hello.txt for clients to read).
     r = run_io_test();
-
-    // Unmount cleanly before exit / idle.
-    ext4_umount(MOUNT_POINT);
-
     if (r != 0)
+        printf("[ext4] WARNING: I/O self-test failed (%d) – continuing anyway\n", r);
+
+    // Register the Namespace server on the "svr" capability so that
+    // Ned can hand it out to client tasks as their "ext4" cap.
+    auto svr_cap = server.registry()->register_obj(&ext4_ns, "svr");
+    if (!svr_cap.is_valid())
     {
-        printf("[ext4] ERROR: I/O test failed\n");
-        return 1;
+        printf("[ext4] WARNING: 'svr' cap not found – no namespace clients\n");
+        // Fall through: still useful as a standalone mount.
+    }
+    else
+    {
+        printf("[ext4] Namespace server ready on 'svr' cap\n");
     }
 
-    printf("[ext4] All tests passed – idling\n");
-    for (;;)
-        sleep(10);
+    printf("[ext4] Entering server loop (filesystem stays mounted)\n");
+    server.loop();
 
+    // Not reached.
     return 0;
 }
