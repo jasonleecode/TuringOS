@@ -104,3 +104,4 @@ module virt-blk.cfg
 module virt-blk.io
 module io
 module virtio-block-driver
+module ext4fs

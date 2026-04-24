@@ -5,8 +5,6 @@ CONTRIB   := $(SRC_DIR)/../../contrib
 
 TARGET    := liblwext4.a liblwext4.so
 PC_FILENAME := liblwext4
-SYSTEMS     := $(SYSTEMS_ABI)
-
 SRC_C := ext4_balloc.c  \
          ext4_bcache.c  \
          ext4_bitmap.c  \
@@ -38,5 +36,9 @@ CPPFLAGS += -DCONFIG_USE_DEFAULT_CFG=1
 
 # Suppress warnings from upstream code
 CFLAGS += -Wno-unused-parameter -Wno-sign-compare
+
+# Force-include a shim that pulls in <stdio.h> before lwext4's ext4_misc.h can
+# redefine __unused; otherwise uClibc's struct member named __unused breaks.
+CFLAGS += -include $(SRC_DIR)/l4re_ext4_pre.h
 
 include $(L4DIR)/mk/lib.mk

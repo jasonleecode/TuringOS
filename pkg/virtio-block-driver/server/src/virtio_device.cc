@@ -50,11 +50,12 @@ bool Block_dev::match_hid(cxx::String const &hid) const
 
 void Block_dev::reset()
 {
-  Dbg::trace().printf("Resetting VirtIO device\n");
-  reg_write(Mmio_status, 0);
-  // Caller (virtio_client) will call init() again if needed; we just reset
-  // the hardware.  For now we keep our software state as-is since the
-  // libblock-device framework will re-initialise the client.
+  // Do NOT write 0 to the QEMU MMIO status register here.  The hardware
+  // virtqueue was set up once in init() and must remain intact across
+  // L4virtio client resets (e.g. when ext4fs calls set_status(0) during
+  // its driver_connect handshake).  Resetting QEMU clears QueuePFN and
+  // all queue state, causing QEMU to silently ignore subsequent requests.
+  Dbg::trace().printf("Virtio_client reset (QEMU queue state preserved)\n");
 }
 
 int Block_dev::dma_map(Block_device::Mem_region *region, l4_addr_t offset,

@@ -960,7 +960,7 @@ public:
     if (!cap.is_valid())
       return -L4_EINVAL;
 
-    irq = L4::Ipc::make_cap(cap, L4_CAP_FPAGE_RO);
+    irq = L4::Ipc::make_cap(cap, L4_CAP_FPAGE_RW);
     return L4_EOK;
   }
 
