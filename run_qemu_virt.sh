@@ -12,7 +12,7 @@ NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
 GPU_MODE=""      # GPU 模式：启用 ramfb + 显示输出
 VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
-CFG_NAME="virt-blk-shell" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
+CFG_NAME="native-shell" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
 SMP_CPUS=2       # 默认双核（Fiasco CONFIG_MP=y，最多16核）
@@ -132,7 +132,6 @@ if [ -n "$CFG_NAME" ]; then
     BUILDS=("$PROJ_ROOT/build/l4re_virt/images/bootstrap_${CFG_NAME}.elf")
 else
     BUILDS=(
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_virt-blk-shell.elf"
         "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
         "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
         "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
@@ -168,7 +167,7 @@ elif echo "$IMAGE" | grep -q "l4re_virt"; then
     MACHINE_TYPE="arm"
     QEMU_ARCH="qemu-system-arm"
     CPU="-cpu cortex-a15"
-    MEM="-m 256M"
+    MEM="-m 512M"
     MACHINE="-M virt"
 else
     MACHINE_TYPE="aarch64"
@@ -258,9 +257,9 @@ if [ -n "$DISK_SIZE" ]; then
 fi
 
 # ---- ext4 配置提示 ----
-if [[ "$CFG_NAME" == virt-blk* ]] && [ -z "$DISK_SIZE" ]; then
+if [ -z "$DISK_SIZE" ]; then
     echo ""
-    echo "警告: $CFG_NAME 需要虚拟磁盘，请添加 --disk 100M 或去掉 --no-disk"
+    echo "警告: ext4 文件系统需要虚拟磁盘，请添加 --disk 100M 或使用默认启动"
 fi
 
 echo ""

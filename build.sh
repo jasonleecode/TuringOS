@@ -431,30 +431,17 @@ build_bootstrap() {
     if [ -n "$ENTRY" ]; then
         info "使用启动入口: $ENTRY"
         $MAKE E="$ENTRY" elfimage
-    elif [ "$BOARD" = "virt" ]; then
-        # virt 平台生成三个常用镜像
-        for entry in native-shell virt-blk virt-blk-shell; do
-            info "生成启动入口: $entry"
-            $MAKE E="$entry" elfimage || warn "入口 $entry 生成失败，继续"
-        done
     else
         local entry="native-shell"
-        info "使用启动入口: $entry"
+        info "生成启动入口: $entry"
         $MAKE E="$entry" elfimage
     fi
 
-    # 复制引导镜像到输出目录（bootstrap.elf = 最后一个生成的）
+    # 复制引导镜像到输出目录
     if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
         cp "$L4RE_BUILD/images/bootstrap.elf" "$BUILD_OUT/"
         info "引导镜像已生成: $BUILD_OUT/bootstrap.elf"
-        if [ "$BOARD" = "virt" ]; then
-            info "可使用 ./run_qemu_virt.sh 启动系统"
-            info "  --cfg native-shell    原生 shell（默认）"
-            info "  --cfg virt-blk        VirtIO 块设备驱动测试"
-            info "  --cfg virt-blk-shell  ext4 文件系统 + native_shell (Phase 3b)"
-        else
-            info "真机部署需要通过 U-Boot 从 SD 卡加载"
-        fi
+        info "可使用 ./run_qemu_virt.sh 启动系统（含网络、ext4、RTC）"
     else
         error "引导镜像生成失败"
     fi
