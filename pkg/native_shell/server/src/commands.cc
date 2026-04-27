@@ -21,6 +21,7 @@
 
 #include "commands.h"
 #include "shell_exec.h"
+#include "log.h"
 
 shell_cmd commands[] = {
     /* general */
@@ -42,6 +43,7 @@ shell_cmd commands[] = {
     { "env",        "Print environment variables",          cmd_env        },
     { "date",       "Print current date and time",          cmd_date       },
     { "list_tasks", "List background tasks",                cmd_list_tasks },
+    { "dmesg",      "Show/manage kernel log  [-c] [-l N] [-n N] [--save]", cmd_dmesg },
     /* program execution */
     { "run",        "Execute a program  <rom/xxx|xxx>",     cmd_run        },
     /* hardware */
@@ -721,7 +723,7 @@ void cmd_run(int argc, char **argv)
 
     const char *program = argv[1];
 
-    printf("[cmd_run] Attempting to run: %s\n", program);
+    klog_info(KLOG_SHELL, "run: starting %s", program);
 
     // 创建任务管理器
     static Simple_task_manager task_manager;
@@ -737,15 +739,67 @@ void cmd_run(int argc, char **argv)
     auto *task = task_manager.spawn(program, exec_argv, exec_envp);
 
     if (!task) {
+        klog_err(KLOG_SHELL, "run: failed to start %s", program);
         printf("run: failed to start %s\n", program);
         return;
     }
 
-    printf("run: task started successfully: %s (task_cap=%lu)\n",
-           program, task->task_cap);
+    klog_info(KLOG_SHELL, "run: spawned %s (task_cap=%lu)", program, task->task_cap);
 
-    // 同步等待任务完成（MVP 行为）
     int exit_code = task_manager.wait(task);
 
+    klog_info(KLOG_SHELL, "run: %s exited code=%d", program, exit_code);
     printf("run: task exited with code: %d\n", exit_code);
+}
+
+/* ------------------------------------------------------------------ */
+/* dmesg — kernel log viewer                                           */
+/* ------------------------------------------------------------------ */
+
+void cmd_dmesg(int argc, char **argv)
+{
+    int  min_level = KLOG_DEBUG;  /* 默认显示全部 */
+    bool do_clear  = false;
+    bool do_save   = false;
+
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "-c") == 0) {
+            do_clear = true;
+        } else if ((strcmp(argv[i], "-l") == 0 || strcmp(argv[i], "-n") == 0)
+                   && i + 1 < argc) {
+            min_level = atoi(argv[++i]);
+            if (strcmp(argv[i - 1], "-n") == 0) {
+                /* -n 设置控制台输出级别，不打印日志 */
+                klog_set_console_level(min_level);
+                printf("console log level set to %d\n", min_level);
+                return;
+            }
+        } else if (strcmp(argv[i], "--save") == 0 || strcmp(argv[i], "-s") == 0) {
+            do_save = true;
+        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            printf("Usage: dmesg [-c] [-l LEVEL] [-n LEVEL] [--save]\n");
+            printf("  (no args)  show ring buffer (all levels)\n");
+            printf("  -l N       show entries at level <= N  (0=EMERG .. 7=DEBUG)\n");
+            printf("  -n N       set console output level (suppresses lower-priority prints)\n");
+            printf("  -c         clear ring buffer after printing\n");
+            printf("  --save     flush ring buffer to %s\n", KLOG_FILE_PATH);
+            printf("Levels: 0 EMERG  1 ALERT  2 CRIT  3 ERR  4 WARN  5 NOTE  6 INFO  7 DEBUG\n");
+            return;
+        } else {
+            printf("dmesg: unknown option '%s' (try --help)\n", argv[i]);
+            return;
+        }
+    }
+
+    if (do_save) {
+        klog_flush();
+        printf("log saved → %s  (%d entries)\n", KLOG_FILE_PATH, klog_count());
+    } else {
+        klog_dump(min_level);
+    }
+
+    if (do_clear) {
+        klog_clear();
+        printf("ring buffer cleared\n");
+    }
 }

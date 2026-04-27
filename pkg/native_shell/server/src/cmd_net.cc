@@ -49,6 +49,7 @@
 #include <pthread-l4.h>
 
 #include "commands.h"
+#include "log.h"
 
 /* ------------------------------------------------------------------ */
 /* Configuration                                                        */
@@ -398,6 +399,7 @@ static bool net_virtio_init_v1()
 
   net_prefill_rx(qsz);   /* fills avail ring and sends QUEUE_NOTIFY(0) */
 
+  klog_info(KLOG_NET, "net: device ready (v1 legacy)");
   printf("net: device ready (v1 legacy)\n");
   return true;
 }
@@ -468,6 +470,7 @@ static bool net_virtio_init_v2()
   nreg_w(VTMMIO_STATUS,
          VTSTS_ACKNOWLEDGE | VTSTS_DRIVER | VTSTS_FEATURES_OK | VTSTS_DRIVER_OK);
   __sync_synchronize();
+  klog_info(KLOG_NET, "net: device ready (v2 modern)");
   printf("net: device ready (v2 modern)\n");
   return true;
 }
@@ -496,6 +499,7 @@ static bool net_virtio_init(l4_addr_t mmio_virt, l4_uint64_t phys_base,
     return false;
   }
 
+  klog_info(KLOG_NET, "net: found virtio-net device (v%u)", version);
   printf("net: found virtio-net device (v%u)\n", version);
   nreg_w(VTMMIO_STATUS, 0);
   __sync_synchronize();
@@ -549,6 +553,7 @@ static bool net_map_mmio(l4_addr_t *virt_out)
     }
   }
 
+  klog_warn(KLOG_NET, "net: no virtio-net in MMIO scan");
   printf("net: virtio-net not found in any MMIO slot\n");
   L4Re::Env::env()->rm()->free_area(vbase);
   return false;
@@ -726,8 +731,11 @@ try {
   net_configure_ip();
 
   g_net_stack_ready = true;
+  klog_info(KLOG_NET, "net: stack ready, IP %s",
+            ip4addr_ntoa(netif_ip4_addr(&n_netif)));
   return nullptr;
 } catch (...) {
+  klog_err(KLOG_NET, "net: init exception, network unavailable");
   printf("net: init exception, network unavailable\n");
   return nullptr;
 }

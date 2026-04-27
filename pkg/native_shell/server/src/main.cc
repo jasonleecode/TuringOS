@@ -13,6 +13,7 @@
 #include <l4/re/l4aux.h>
 #include "commands.h"
 #include "shell_exec.h"
+#include "log.h"
 
 l4re_aux_t const *l4re_aux = nullptr;
 
@@ -164,20 +165,27 @@ int main(int argc, char const* const* argv)
     pthread_create(&mon, &attr, stdin_monitor, nullptr);
     pthread_attr_destroy(&attr);
 
+    klog_init();
+    klog_info(KLOG_KERN, "TuringOS native_shell starting");
+
     int r = Devfs::init();
     if (r < 0)
-        printf("devfs: mount failed (%d)\n", r);
+        klog_err(KLOG_KERN, "devfs: mount failed (%d)", r);
+    else
+        klog_info(KLOG_KERN, "devfs: mounted");
     setup_devices();
+
     net_auto_init();
+    klog_info(KLOG_NET, "net: auto-init started");
 
     // Initialize shell-exec: set up programs library
     auto* env = L4Re::Env::env();
     auto programs_ns = env->get_cap<L4Re::Namespace>("programs");
     if (programs_ns.is_valid()) {
         File_resolver::set_programs_library(programs_ns);
-        printf("shell-exec: Programs library initialized\n");
+        klog_info(KLOG_KERN, "shell-exec: programs library ready");
     } else {
-        printf("shell-exec: Programs library not available\n");
+        klog_warn(KLOG_KERN, "shell-exec: programs library not available");
     }
 
     signal(SIGINT, handle_sigint);
@@ -185,6 +193,7 @@ int main(int argc, char const* const* argv)
     rl_getc_function             = rl_getc_buf;
     rl_attempted_completion_function = shell_completion;
 
+    klog_info(KLOG_KERN, "shell ready");
     printf("TuringOS Native Shell\n");
     printf("Type 'help' for available commands.\n\n");
 
@@ -265,8 +274,10 @@ int main(int argc, char const* const* argv)
                 break;
             }
         }
-        if (!found)
+        if (!found) {
+            klog_warn(KLOG_SHELL, "command not found: %s", cmd_argv[0]);
             printf("%s: command not found\n", cmd_argv[0]);
+        }
 
         g_cmd_running = false;
 

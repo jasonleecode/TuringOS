@@ -48,6 +48,7 @@ void net_auto_init(); /* start network stack in background at boot */
 
 /* system */
 void cmd_list_tasks(int argc, char **argv);
+void cmd_dmesg(int argc, char **argv);
 
 /* Background task registry */
 void task_register(const char *name, const char *desc);
