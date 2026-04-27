@@ -14,6 +14,7 @@
 
 #include <l4/sys/cxx/ipc_epiface>
 #include <l4/re/namespace>
+#include <string.h>
 #include <l4/sys/cxx/ipc_array>
 #include <l4/sys/cxx/ipc_types>
 #include <l4/re/util/object_registry>
@@ -24,9 +25,17 @@ class Ext4_namespace
 public:
   using Name_buffer = L4::Ipc::Array_in_buf<char, unsigned long>;
 
-  // Pass the server registry so op_query can register per-file objects.
-  explicit Ext4_namespace(L4Re::Util::Object_registry *registry)
-  : _registry(registry) {}
+  // `prefix` is the absolute lwext4 path this namespace is rooted at, e.g.
+  // "/" for the root namespace, "/subdir" for a child directory namespace.
+  explicit Ext4_namespace(L4Re::Util::Object_registry *registry,
+                          const char *prefix = "/")
+  : _registry(registry)
+  {
+    size_t n = strlen(prefix);
+    if (n >= sizeof(_prefix)) n = sizeof(_prefix) - 1;
+    memcpy(_prefix, prefix, n);
+    _prefix[n] = '\0';
+  }
 
   l4_ret_t op_query(L4Re::Namespace::Rights,
                     Name_buffer const &name,
@@ -44,4 +53,5 @@ public:
 
 private:
   L4Re::Util::Object_registry *_registry;
+  char _prefix[256];
 };
