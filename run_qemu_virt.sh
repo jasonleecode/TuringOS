@@ -15,7 +15,7 @@ VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
 CFG_NAME="native-shell" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
-SMP_CPUS=2       # 默认双核（Fiasco CONFIG_MP=y，最多16核）
+SMP_CPUS=1       # 默认单核（SMP 模式下 Fiasco 调度器存在竞态，暂时禁用）
 DISK_SIZE="100M" # 虚拟磁盘大小（设为空字符串禁用磁盘）
 
 while [[ $# -gt 0 ]]; do

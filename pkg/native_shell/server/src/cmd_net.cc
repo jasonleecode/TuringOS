@@ -260,7 +260,7 @@ static void *net_rx_thread(void *arg)
 
   for (;;) {
     while (n_dma->rx_q.used.idx == n_rx_last_used)
-      l4_sleep(1);
+      l4_sleep(10);
 
     nreg_w(VTMMIO_IRQ_ACK, nreg_r(VTMMIO_IRQ_STATUS));
 
