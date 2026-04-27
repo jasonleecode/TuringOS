@@ -684,7 +684,7 @@ static void handle_client(int cfd, struct sockaddr_in *cli)
 }
 
 static void *net_stack_init_thread(void * /*arg*/)
-{
+try {
   /* ---- Allocate DMA buffer ---- */
   struct virtnet_dma *vdma = nullptr;
   l4_uint64_t         phys = 0;
@@ -696,7 +696,7 @@ static void *net_stack_init_thread(void * /*arg*/)
   /* ---- Map virtio MMIO ---- */
   l4_addr_t mmio_virt = 0;
   if (!net_map_mmio(&mmio_virt)) {
-    printf("net: MMIO mapping failed\n");
+    printf("net: no virtio-net device, skipping network init\n");
     return nullptr;
   }
 
@@ -726,6 +726,9 @@ static void *net_stack_init_thread(void * /*arg*/)
   net_configure_ip();
 
   g_net_stack_ready = true;
+  return nullptr;
+} catch (...) {
+  printf("net: init exception, network unavailable\n");
   return nullptr;
 }
 
