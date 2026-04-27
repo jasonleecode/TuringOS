@@ -12,7 +12,7 @@ NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
 GPU_MODE=""      # GPU 模式：启用 ramfb + 显示输出
 VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
-CFG_NAME=""      # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
+CFG_NAME="virt-blk-shell" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
 SMP_CPUS=2       # 默认双核（Fiasco CONFIG_MP=y，最多16核）
@@ -132,11 +132,10 @@ if [ -n "$CFG_NAME" ]; then
     BUILDS=("$PROJ_ROOT/build/l4re_virt/images/bootstrap_${CFG_NAME}.elf")
 else
     BUILDS=(
+        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_virt-blk-shell.elf"
         "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
         "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-        "$PROJ_ROOT/build/l4re_arm64/images/bootstrap.elf"
         "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-final-rpi4.elf"
     )
 fi
 
@@ -153,7 +152,7 @@ if [ -z "$IMAGE" ]; then
     echo "错误: 找不到引导镜像"
     echo ""
     echo "请先运行构建:"
-    echo "  make -C build/l4re_virt PKGS=native_shell"
+    echo "  ./build.sh --board virt bootstrap"
     exit 1
 fi
 
@@ -259,11 +258,9 @@ if [ -n "$DISK_SIZE" ]; then
 fi
 
 # ---- ext4 配置提示 ----
-if [ "$CFG_NAME" = "virt-blk-shell" ] || [ "$CFG_NAME" = "virt-blk" ]; then
-    if [ -z "$DISK_SIZE" ]; then
-        echo ""
-        echo "警告: $CFG_NAME 需要虚拟磁盘，请添加 --disk 100M"
-    fi
+if [[ "$CFG_NAME" == virt-blk* ]] && [ -z "$DISK_SIZE" ]; then
+    echo ""
+    echo "警告: $CFG_NAME 需要虚拟磁盘，请添加 --disk 100M 或去掉 --no-disk"
 fi
 
 echo ""
