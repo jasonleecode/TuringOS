@@ -7,7 +7,8 @@
 | Phase 1 | VirtIO 块设备驱动 (`pkg/virtio-block-driver/`) | ✅ 完成 |
 | Phase 2 | ext4fs 服务器 — 挂载 + I/O 自测 | ✅ 完成 |
 | Phase 3b | L4Re Namespace 服务器 — POSIX 只读访问 | ✅ 完成 |
-| Phase 4 | 写支持 — native_shell 可创建/修改 ext4 文件 | 🔲 待实现 |
+| Phase 4 | 写支持 — `echo > /ext4/file`、`cat` 读回 | ✅ 完成 |
+| Phase 5 | 目录列举 — `ls /ext4` 及子目录递归 | ✅ 完成 |
 
 ---
 
@@ -20,7 +21,7 @@ QEMU virtio-blk (bus=virtio-mmio-bus.1, 0xa000200)
     └─ io 服务 (virt-blk.io)
         └─ virtio-block-driver (pkg/virtio-block-driver/)
             └─ ext4fs 服务器 (pkg/filesystem/ext4/server/)
-                ├─ 首次启动自动 mkfs.ext4
+                ├─ 主机预格式化（run_qemu_virt.sh mkfs.ext4）
                 ├─ ext4_mount("/")
                 └─ 自测：写 /hello.txt，读回验证
 ```
@@ -32,7 +33,7 @@ QEMU virtio-blk (bus=virtio-mmio-bus.1, 0xa000200)
 | `pkg/virtio-block-driver/server/src/main.cc` | VirtIO MMIO 枚举、libblock-device 集成 |
 | `pkg/virtio-block-driver/server/src/virtio_device.cc` | `Block_dev`：init/reset/IRQ；关键修复：reset() 不写 QEMU MMIO |
 | `pkg/filesystem/ext4/server/src/virtio_blockdev.cc` | lwext4 `ext4_blockdev` 接口，封装 L4virtio Client |
-| `pkg/filesystem/ext4/server/src/main.cc` | 挂载、自测、Phase 3b 服务器循环 |
+| `pkg/filesystem/ext4/server/src/main.cc` | 挂载、自测、服务器循环 |
 | `conf/virt-blk.cfg` | Ned 配置：io → blk-driver → ext4fs |
 | `conf/virt-blk.io` | io 设备描述：SLOT0=net (0xa000000)，SLOT1=blk (0xa000200) |
 
@@ -51,90 +52,108 @@ fopen("/ext4/hello.txt")
   → File_factory<Namespace> → Ns_dir # 包装为 VFS 目录
   → Ns_dir::get_entry("hello.txt")
   → ext4fs::op_query("hello.txt")    # IPC 调用 ext4fs
-    → ext4_fopen / ext4_fread        # 读取 lwext4
-    → mem_alloc()->alloc(size, ds)   # 分配 Dataspace
-    → 填充内容，返回只读 DS cap
-  → File_factory<Dataspace> → Ro_file # 包装为只读内存映射文件
-  → fread() 直接读映射内存
+    → Ext4_file_svr 分配共享 DS
+    → 填充文件内容，返回 IPC gate cap
+  → File_factory<Ext4_file_ops> → Ext4_file_vfs
+  → fread/fwrite 直接操作映射内存
 ```
 
-### 新增文件
+### 关键文件
 
 | 文件 | 说明 |
 |------|------|
-| `pkg/filesystem/ext4/server/src/ext4_ns.h` | `Ext4_namespace` 类声明（实现 `L4Re::Namespace`） |
-| `pkg/filesystem/ext4/server/src/ext4_ns.cc` | `op_query`：打开文件 → 分配 DS → 填充 → 返回只读 cap |
+| `pkg/filesystem/ext4/server/src/ext4_ns.h/.cc` | `Ext4_namespace`：op_query 分发文件/目录/dirinfo |
 | `conf/virt-blk-shell.cfg` | 组合 Ned 配置：io + blk-driver + ext4fs(svr) + native_shell(ext4) |
-
-### 局限性
-
-- **只读**：`op_register_obj` 返回 `-EPERM`，native_shell 无法写入 ext4
-- **全文件加载**：每次 `op_query` 将整个文件读入 Dataspace（不适合大文件）
-- **无目录列举**：`ls /ext4/` 不工作（未实现 `getdents`）
-- **无子目录**：`/ext4/dir/file` 的子命名空间未实现
-- **cap 泄漏**：每次 `op_query` 会 `release()` 一个 Dataspace cap slot（受访问文件数限制）
 
 ---
 
-## Phase 4：写支持（待实现）
+## Phase 4：写支持（已完成）
 
 ### 目标
 
-native_shell 能通过标准 POSIX 调用在 ext4 上创建和修改文件：
-
 ```
-turingos> echo "test" > /ext4/new.txt   # 写入新文件
-turingos> cat /ext4/new.txt             # 读回验证
+turingos> echo "test" > /ext4/new.txt
+turingos> cat /ext4/new.txt
 test
 ```
 
-### 方案
+### 实现方案：共享 Dataspace + 延迟回写
 
-L4Re 的 `File_factory<Dataspace>` 创建的是只读的 `Ro_file`。要支持写，需要在 ext4fs 侧实现一个**可写文件协议**。
+1. `op_query(name)` → 创建 `Ext4_file_svr`，分配 R/W Dataspace，预填文件内容
+2. 客户端 `Ext4_file_vfs` 映射 DS，`preadv`/`pwritev` 直接操作内存，`_dirty` 标记有改动
+3. `fclose()` → `unlock_all_locks()` → `op_close(written)` → `ext4_fwrite` 写回磁盘
+4. `O_TRUNC`（`echo >` 重定向）：`ftruncate(0)` → `_dirty=true, _written=0` → `op_close(0)` → 服务端 `ext4_fopen("wb")` 清空文件
 
-#### 方案 A：可写 Dataspace（简单，适合小文件）
+### Shell 输出重定向
 
-1. `op_query` 返回**可写** Dataspace（`L4_CAP_FPAGE_RW`）
-2. 客户端写入 Dataspace 后调用 ext4fs 的 `commit(handle)` 接口
-3. ext4fs 将 Dataspace 内容写回 lwext4
+`parse_line` 把 `>` 当普通 token，在 `main.cc` 的命令分发循环里补充解析：
+扫描 argv 找 `>` 和后续路径 → `open(O_WRONLY|O_CREAT|O_TRUNC)` → `dup2` 到 stdout → 执行命令 → 恢复 stdout。
 
-问题：需要自定义 `commit` IPC，客户端需要显式调用，不能透明地通过 POSIX write 触发。
+### 关键文件
 
-#### 方案 B：自定义 L4Re File 协议（完整 POSIX，复杂）
+| 文件 | 说明 |
+|------|------|
+| `pkg/filesystem/ext4/include/ext4_file_proto.h` | `Ext4_file_ops` IPC 协议（0x5800）：`get_ds`、`close` |
+| `pkg/filesystem/ext4/server/src/ext4_file_svr.h/.cc` | 服务端：DS 分配、预填、`op_close` 回写 |
+| `pkg/filesystem/ext4/client/src/ext4_vfs.h/.cc` | 客户端：`Ext4_file_vfs`（Be_file_pos）+ `File_factory` 注册 |
+| `pkg/native_shell/server/src/main.cc` | `>` 输出重定向逻辑 |
+| `run_qemu_virt.sh` | 新建磁盘时自动 `mkfs.ext4 -b 4096 -O ^has_journal`（绕过 lwext4 mkfs bug） |
 
-实现一个自定义 IPC 协议（类似 `L4Re::Vfs::File`），包含：
-- `op_open(path, flags)` → 返回 file handle
-- `op_read(handle, offset, size)` → 数据 DS
-- `op_write(handle, offset, data_ds, size)` → 写入并刷盘
-- `op_close(handle)`
+### 已知问题修复
 
-客户端注册对应的 `File_factory`，使 `fopen/fread/fwrite` 透明地走 IPC。
+| 问题 | 根因 | 修复 |
+|------|------|------|
+| `ext4_mkfs` 在全零磁盘上 segfault（PFA=0x13833003） | lwext4 mkfs 未初始化指针 | 主机用 `mkfs.ext4` 预格式化，服务端不再调用 mkfs |
+| `Rpc_call::call` undefined reference | `L4_RPC_NF` 需要 `L4_RPC_DEF` 显式实例化 | 改用 `L4_INLINE_RPC_NF` |
+| `off64_t` 未声明 | `_GNU_SOURCE` 在 `include lib.mk` 之前被 build system 剥除 | 将 `CPPFLAGS += -D_GNU_SOURCE` 移至 include 之后 |
+| ext4fs 链接时 `__aeabi_unwind_cpp_pr0` 未定义 | ARM EABI 展开符号需要 libgcc | 添加 `libgcc libgcc_eh` 到 REQUIRES_LIBS |
 
-#### 方案 C：共享内存写缓冲（推荐，平衡复杂度）
+---
 
-1. `op_open(path, flags)` → 返回 `{read_ds, write_ds, handle}`
-   - `read_ds`：初始文件内容（只读）
-   - `write_ds`：预分配写缓冲（可写）
-2. 客户端 `fwrite` → 写入 `write_ds`
-3. 客户端 `fclose` 触发 `op_commit(handle, size)` → ext4fs 将 `write_ds` 写入磁盘
-4. 通过 `File_factory` 注册使整个流程对 native_shell 透明
+## Phase 5：目录列举（已完成）
 
-### 实现步骤
+### 目标
 
-1. **定义 IPC 接口** (`pkg/filesystem/ext4/include/ext4_file_iface.h`)
-   - `L4_RPC` 定义：`open`, `read`, `write`, `commit`, `close`
+```
+turingos> ls /ext4
+lost+found/
+hello.txt
+phase4.txt
+turingos> ls /ext4/subdir
+...
+```
 
-2. **实现服务端** (`ext4_file_server.cc`)
-   - 管理 open file 表（handle → ext4_file + write_ds）
-   - `op_write` 或 `op_commit` 时调用 `ext4_fwrite`
+### 原理
 
-3. **实现客户端库** (`pkg/filesystem/ext4/client/`)
-   - `File_factory` 注册自定义协议
-   - `Be_file` 子类封装 IPC 调用
+`Ns_dir::getdents()` 通过查询特殊条目 `.dirinfo` 实现目录枚举：它调用 `_ns->query(".dirinfo", ds_cap)` 并期望收到一个 Dataspace，其内容为若干行 `<name-length>:<name>\n`。
 
-4. **native_shell 链接客户端库**
-   - `Makefile` 添加 `REQUIRES_LIBS += ext4_client`
-   - 启动时 `vfs_ops->register_file_factory(...)` 注册工厂
+```
+ls /ext4
+  → opendir("/ext4") → Ns_dir
+  → readdir → Ns_dir::getdents
+  → op_query(".dirinfo")
+    → ext4_dir_open("/")
+    → 枚举所有条目（跳过 "." ".."）
+    → 构建 "<len>:<name>\n" 文本
+    → 分配 DS，填充，返回 DS cap
+  → 解析行，填充 dirent64 buf
+  → 每个条目 stat() → op_query(name) → fstat
+```
+
+### 子目录支持
+
+`op_query("subdir")` 在访问路径之前先用 `ext4_dir_open` 探测：
+- 若是目录：注册一个新的 `Ext4_namespace(_registry, "/subdir")` 并返回其 cap（协议仍为 `L4Re::Namespace`，客户端自动包装为 `Ns_dir`，再次支持 `.dirinfo` 查询）
+- 若是文件：走原来的 `Ext4_file_svr` 路径
+
+`Ext4_namespace` 新增 `prefix` 构造参数（默认 `"/"`），子目录命名空间路径拼接为 `prefix + "/" + component`。
+
+### 关键文件
+
+| 文件 | 说明 |
+|------|------|
+| `pkg/filesystem/ext4/server/src/ext4_ns.h` | `Ext4_namespace` 新增 `_prefix` 成员和带 prefix 的构造函数 |
+| `pkg/filesystem/ext4/server/src/ext4_ns.cc` | `make_dirinfo(dir_path)`：枚举目录并构建 dirinfo DS；`op_query` 三路分发：`.dirinfo` / 目录 / 文件 |
 
 ---
 
@@ -143,33 +162,34 @@ L4Re 的 `File_factory<Dataspace>` 创建的是只读的 `Ro_file`。要支持�
 ### 构建
 
 ```bash
-# 构建所有 virt 平台镜像（含 virt-blk-shell）
+# 重建 ext4fs + native_shell，打包镜像
+make -C build/l4re_virt pkg/filesystem/ext4 pkg/native_shell
 ./build.sh --board virt bootstrap
 
-# 或只构建 virt-blk-shell 入口
-ENTRY=virt-blk-shell ./build.sh --board virt bootstrap
-
-# 仅重建 ext4fs 二进制
-make -C build/l4re_virt/ext-pkg/$(pwd)/pkg/filesystem/ext4/server/src \
-     O=build/l4re_virt L4DIR=$(pwd)/l4mk
-
-# 重新生成 ELF 镜像
-export MODULE_SEARCH_PATH="build/kernel_virt:build/l4re_virt/bin/arm_armv7a/l4f:build/l4re_virt/lib/arm_armv7a/std/l4f:conf"
-make -C build/l4re_virt E=virt-blk-shell elfimage
+# 仅重建 ext4fs
+make -C build/l4re_virt pkg/filesystem/ext4
 ```
 
 ### 运行
 
 ```bash
-# ext4 文件系统 + native_shell（推荐）
+# 首次运行：自动创建并 mkfs.ext4 格式化磁盘
 ./run_qemu_virt.sh --cfg virt-blk-shell --disk 100M --no-net
 
-# 仅块设备驱动测试
-./run_qemu_virt.sh --cfg virt-blk --disk 100M --no-net
+# 已有旧磁盘时强制重新格式化
+rm build/virt_disk.img
+./run_qemu_virt.sh --cfg virt-blk-shell --disk 100M --no-net
+```
 
-# native_shell 内操作 ext4 文件（Phase 3b 只读）
-turingos> cat /ext4/hello.txt
-Hello from TuringOS ext4fs!
+### 典型操作
+
+```
+turingos> echo "hello" > /ext4/hello.txt   # 写入
+turingos> cat /ext4/hello.txt              # 读取
+hello
+turingos> ls /ext4                         # 目录列举
+lost+found/
+hello.txt
 ```
 
 > **注意**：`virt-blk.io` 将块设备固定在 `bus=virtio-mmio-bus.1`（MMIO 0xa000200，IRQ 49）。
@@ -186,3 +206,14 @@ Hello from TuringOS ext4fs!
 | ext4fs 收不到 IRQ | `op_device_notification_irq` 发送 `L4_CAP_FPAGE_RO` | 改为 `L4_CAP_FPAGE_RW` |
 | ELF 镜像缺少 ext4fs | `modules.list` virt-blk 条目漏掉 `module ext4fs` | 已补充 |
 | QEMU DeviceID=0 | 未指定 `bus=virtio-mmio-bus.1`，块设备落在错误 MMIO 槽 | run 脚本始终指定 bus |
+| ext4_mkfs segfault | lwext4 mkfs 在全零磁盘上空指针解引用（PFA=0x13833003） | 主机 mkfs.ext4 预格式化 |
+| `ls /ext4` 返回空 | `Ns_dir::getdents` 需要 `.dirinfo` DS，服务端未实现 | Phase 5：`op_query(".dirinfo")` 枚举目录 |
+
+---
+
+## 后续方向
+
+- **性能**：`op_query` 每次都分配 DS 并读取整个文件，大文件 / 高频访问时可考虑缓存或 mmap
+- **写并发**：同一文件多次 `op_query` 会产生多个 `Ext4_file_svr`，末次 `op_close` 覆盖前面的写入
+- **文件创建语义**：目前 `O_CREAT` 行为依赖 `ext4_fopen("wb")` 的副作用，未实现 `mkdir`
+- **cap 生命周期**：`Ext4_file_svr` 和子 `Ext4_namespace` 被注册到 registry 后不会自动释放，长时间运行会耗尽 cap slot

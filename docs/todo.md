@@ -33,9 +33,19 @@ fork 的 l4re 和 kernel（Fiasco）分支已落后于上游主分支，需要 m
 
 ### 文件系统 / VFS
 
-有 emmc-driver、nvme-driver 块设备驱动，但缺少文件系统层。
-- 近期目标：调研 ROMFS 用法，搞清楚如何挂载只读根文件系统
-- 中期目标：VFS server，将块设备暴露为文件接口（参考 L4Re devfs）
+| 状态 | 子任务 |
+|------|------|
+| [✓] | VirtIO 块设备驱动（pkg/virtio-block-driver） |
+| [✓] | ext4fs 服务器挂载 + I/O 自测（lwext4） |
+| [✓] | L4Re Namespace 服务器 — POSIX 只读访问（cat /ext4/file） |
+| [✓] | 写支持 — `echo > /ext4/file`、`cat` 读回（共享 Dataspace + op_close 回写） |
+| [✓] | 目录列举 — `ls /ext4` 及子目录递归（`.dirinfo` DS 机制） |
+| 待做 | cap 生命周期管理：`Ext4_file_svr` / 子 namespace 注册后不自动释放，长期运行会耗尽 cap slot |
+| 待做 | 写并发：同一文件多个 op_query 产生多个 svr，末次 op_close 覆盖前面写入 |
+| 待做 | `mkdir` / `unlink` 支持 |
+| 待做 | 其他块设备（emmc-driver、nvme-driver）挂载 ext4 |
+
+详细设计见 [ext4-implementation-plan.md](ext4-implementation-plan.md)。
 
 ### 网络栈完善
 
