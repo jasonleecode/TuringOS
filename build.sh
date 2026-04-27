@@ -424,20 +424,34 @@ build_bootstrap() {
     arch_lib="${arch_lib:-$L4RE_BUILD/lib}"
     export MODULE_SEARCH_PATH="$KERNEL_BUILD:${arch_bin}:${arch_lib}:$CONF_DIR"
 
-    # 选择启动入口 (可通过环境变量 ENTRY 覆盖)
-    # 可用入口: fiasco-base-test, shell, demo
-    local entry="${ENTRY:-native-shell}"
-    info "使用启动入口: $entry"
-
+    # 选择要生成的启动入口列表
+    # 可通过环境变量 ENTRY 指定单个入口，默认生成所有 virt 常用入口
     cd "$L4RE_BUILD"
-    $MAKE E="$entry" elfimage
 
-    # 复制引导镜像到输出目录
+    if [ -n "$ENTRY" ]; then
+        info "使用启动入口: $ENTRY"
+        $MAKE E="$ENTRY" elfimage
+    elif [ "$BOARD" = "virt" ]; then
+        # virt 平台生成三个常用镜像
+        for entry in native-shell virt-blk virt-blk-shell; do
+            info "生成启动入口: $entry"
+            $MAKE E="$entry" elfimage || warn "入口 $entry 生成失败，继续"
+        done
+    else
+        local entry="native-shell"
+        info "使用启动入口: $entry"
+        $MAKE E="$entry" elfimage
+    fi
+
+    # 复制引导镜像到输出目录（bootstrap.elf = 最后一个生成的）
     if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
         cp "$L4RE_BUILD/images/bootstrap.elf" "$BUILD_OUT/"
         info "引导镜像已生成: $BUILD_OUT/bootstrap.elf"
         if [ "$BOARD" = "virt" ]; then
             info "可使用 ./run_qemu_virt.sh 启动系统"
+            info "  --cfg native-shell    原生 shell（默认）"
+            info "  --cfg virt-blk        VirtIO 块设备驱动测试"
+            info "  --cfg virt-blk-shell  ext4 文件系统 + native_shell (Phase 3b)"
         else
             info "真机部署需要通过 U-Boot 从 SD 卡加载"
         fi
@@ -683,6 +697,13 @@ show_usage() {
     echo ""
     echo "环境变量:"
     echo "  CROSS_COMPILE  交叉编译器前缀 (会根据 --board 自动设置)"
+    echo "  ENTRY          指定单个启动入口 (virt 默认生成全部常用入口)"
+    echo ""
+    echo "virt 平台启动入口 (bootstrap 目标生成以下镜像):"
+    echo "  native-shell      原生 Shell (默认)"
+    echo "  virt-blk          VirtIO 块设备驱动测试"
+    echo "  virt-blk-shell    ext4 文件系统 + native_shell (Phase 3b)"
+    echo "  用法: ENTRY=virt-blk-shell ./build.sh --board virt bootstrap"
     echo ""
     echo "构建产物将收集到: build/artifacts/"
 }

@@ -4,6 +4,7 @@
 #include <signal.h>
 #include <setjmp.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <pthread.h>
 #include <readline/readline.h>
 #include <readline/history.h>
@@ -224,6 +225,35 @@ int main(int argc, char const* const* argv)
             continue;
         }
 
+        // Detect output redirection: scan argv for bare '>'
+        const char *redir_path = nullptr;
+        int new_argc = 0;
+        for (int i = 0; i < cmd_argc; i++) {
+            if (strcmp(cmd_argv[i], ">") == 0 && i + 1 < cmd_argc) {
+                redir_path = cmd_argv[i + 1];
+                i++;            // skip filename too
+            } else {
+                cmd_argv[new_argc++] = cmd_argv[i];
+            }
+        }
+        cmd_argv[new_argc] = nullptr;
+        cmd_argc = new_argc;
+
+        // Set up redirection: open file, save old stdout fd, dup2
+        int saved_stdout = -1;
+        int redir_fd     = -1;
+        if (redir_path) {
+            fflush(stdout);
+            saved_stdout = dup(STDOUT_FILENO);
+            redir_fd = open(redir_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            if (redir_fd < 0) {
+                printf("shell: cannot open '%s' for writing\n", redir_path);
+                redir_path = nullptr;
+            } else {
+                dup2(redir_fd, STDOUT_FILENO);
+            }
+        }
+
         g_shell_interrupt = 0;
         g_cmd_running     = true;
 
@@ -239,6 +269,15 @@ int main(int argc, char const* const* argv)
             printf("%s: command not found\n", cmd_argv[0]);
 
         g_cmd_running = false;
+
+        // Restore stdout after redirection
+        if (redir_path && saved_stdout >= 0) {
+            fflush(stdout);
+            dup2(saved_stdout, STDOUT_FILENO);
+            close(saved_stdout);
+        }
+        if (redir_fd >= 0)
+            close(redir_fd);
 
         if (g_shell_interrupt) {
             putchar('\n');

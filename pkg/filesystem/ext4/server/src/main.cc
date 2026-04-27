@@ -53,7 +53,7 @@ static int format_disk(struct ext4_blockdev *bd)
     struct ext4_fs        fs;
     struct ext4_mkfs_info info;
     memset(&info, 0, sizeof(info));
-    info.block_size = 1024;   // 1 KB blocks (safe for 100 MiB disk)
+    info.block_size = 4096;   // 4 KB blocks (standard ext4 block size)
     info.journal    = false;  // skip journal for simplicity
 
     int r = ext4_mkfs(&fs, bd, &info, F_SET_EXT4);
@@ -107,7 +107,9 @@ static int run_io_test()
 // ----- Server -----
 
 static L4Re::Util::Registry_server<L4Re::Util::Br_manager_hooks> server;
-static Ext4_namespace ext4_ns;
+// Ext4_namespace receives the registry pointer so it can register per-file
+// Ext4_file_svr objects dynamically in response to op_query calls.
+static Ext4_namespace ext4_ns(server.registry());
 
 // ----- main -----
 
@@ -144,12 +146,20 @@ int main(int /*argc*/, char const *const * /*argv*/)
         return 1;
     }
 
-    // Auto-format on first boot (no valid superblock).
+    // Check for valid ext4 superblock.  The disk should be pre-formatted on the
+    // host with mkfs.ext4 (run_qemu_virt.sh does this automatically).  The
+    // in-process fallback is kept for completeness but lwext4 ext4_mkfs can
+    // crash on a fully-zeroed image, so host pre-formatting is required.
     if (!has_valid_superblock(bd))
     {
+        printf("[ext4] WARNING: no valid superblock – attempting in-process mkfs\n");
+        printf("[ext4] TIP: delete build/virt_disk.img and rerun to auto-format\n");
         r = format_disk(bd);
         if (r != EOK)
+        {
+            printf("[ext4] FATAL: mkfs failed; disk must be pre-formatted with mkfs.ext4\n");
             return 1;
+        }
     }
 
     // Mount.

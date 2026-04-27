@@ -76,7 +76,11 @@ while [[ $# -gt 0 ]]; do
             echo "用法: $0 [选项]"
             echo ""
             echo "选项:"
-            echo "  --cfg NAME            指定配置 (加载 bootstrap_NAME.elf，如 smp-test, fb-test)
+            echo "  --cfg NAME            指定配置 (加载 bootstrap_NAME.elf)
+                        常用配置:
+                          native-shell      原生 Shell (默认)
+                          virt-blk          VirtIO 块设备测试 (需 --disk)
+                          virt-blk-shell    ext4 + native_shell (需 --disk)
   --no-net              禁用网络"
             echo "  --net-shell           启用网络 (默认已启用)"
             echo "  --host-port PORT      主机转发端口 (默认 5555)"
@@ -90,11 +94,13 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-disk             禁用虚拟磁盘"
             echo ""
             echo "示例:"
-            echo "  $0                         # 带网络启动 (默认)"
-            echo "  $0 --no-net                # 不带网络启动"
-            echo "  $0 --host-port 8080        # 自定义转发端口"
-            echo "  $0 --disk 512M             # 512MB 虚拟磁盘"
-            echo "  $0 --no-disk               # 禁用虚拟磁盘"
+            echo "  $0                                        # native-shell 带网络启动 (默认)"
+            echo "  $0 --no-net                               # 不带网络启动"
+            echo "  $0 --cfg virt-blk-shell --disk 100M      # ext4 文件系统 + native_shell"
+            echo "  $0 --cfg virt-blk --disk 100M            # 仅 VirtIO 块设备测试"
+            echo "  $0 --host-port 8080                      # 自定义转发端口"
+            echo "  $0 --disk 512M                           # 512MB 虚拟磁盘"
+            echo "  $0 --no-disk                             # 禁用虚拟磁盘"
             echo "  $0 --gpu                   # GPU 调试，VNC 监听 :5900"
             echo "  $0 --gpu --vnc 5901        # GPU 调试，VNC 监听 :5901"
             echo "  $0 --gpu --gtk             # GPU 调试，GTK 窗口"
@@ -233,21 +239,31 @@ DISK_ARGS=""
 DISK_IMAGE="$PROJ_ROOT/build/virt_disk.img"
 
 if [ -n "$DISK_SIZE" ]; then
-    # 创建虚拟磁盘（如果不存在）
+    # 创建虚拟磁盘（如果不存在），并用 mkfs.ext4 预格式化
     if [ ! -f "$DISK_IMAGE" ]; then
         echo ""
         echo "创建虚拟磁盘: $DISK_IMAGE ($DISK_SIZE)"
         mkdir -p "$(dirname "$DISK_IMAGE")"
         qemu-img create -f raw "$DISK_IMAGE" "$DISK_SIZE"
-        echo "虚拟磁盘创建完成"
+        echo "预格式化 ext4 文件系统..."
+        mkfs.ext4 -b 4096 -O ^has_journal -F "$DISK_IMAGE"
+        echo "虚拟磁盘创建并格式化完成"
     fi
 
     # 添加 VirtIO 块设备 (virtio-mmio transport, not PCIe)
     DISK_ARGS="-drive if=none,id=vdisk,file=$DISK_IMAGE,format=raw -device virtio-blk-device,drive=vdisk,bus=virtio-mmio-bus.1"
     echo ""
-    echo "磁盘设备: VirtIO Block"
+    echo "磁盘设备: VirtIO Block (bus=virtio-mmio-bus.1 → 0xa000200)"
     echo "  磁盘路径: $DISK_IMAGE"
     echo "  磁盘大小: $DISK_SIZE"
+fi
+
+# ---- ext4 配置提示 ----
+if [ "$CFG_NAME" = "virt-blk-shell" ] || [ "$CFG_NAME" = "virt-blk" ]; then
+    if [ -z "$DISK_SIZE" ]; then
+        echo ""
+        echo "警告: $CFG_NAME 需要虚拟磁盘，请添加 --disk 100M"
+    fi
 fi
 
 echo ""
