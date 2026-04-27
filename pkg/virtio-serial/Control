@@ -1,0 +1,2 @@
+requires: libio-vbus stdlibs
+maintainer: jasonlee@turingos.org

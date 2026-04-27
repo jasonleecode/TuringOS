@@ -17,6 +17,7 @@ GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="1280x720" # 帧缓冲分辨率
 SMP_CPUS=2       # 默认单核（SMP 模式下 Fiasco 调度器存在竞态，暂时禁用）
 DISK_SIZE="100M" # 虚拟磁盘大小（设为空字符串禁用磁盘）
+UART_MODE=""     # virtio-serial 串口（--uart 启用）
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -71,6 +72,10 @@ while [[ $# -gt 0 ]]; do
             DISK_SIZE=""
             shift
             ;;
+        --uart)
+            UART_MODE="pty"
+            shift
+            ;;
         --help|-h)
             echo ""
             echo "用法: $0 [选项]"
@@ -81,6 +86,7 @@ while [[ $# -gt 0 ]]; do
                           native-shell      原生 Shell (默认)
                           virt-blk          VirtIO 块设备测试 (需 --disk)
                           virt-blk-shell    ext4 + native_shell (需 --disk)
+                          uart-test         virtio-serial Vcon 服务器 + 客户端 (需 --uart)
   --no-net              禁用网络"
             echo "  --net-shell           启用网络 (默认已启用)"
             echo "  --host-port PORT      主机转发端口 (默认 5555)"
@@ -97,7 +103,8 @@ while [[ $# -gt 0 ]]; do
             echo "  $0                                        # native-shell 带网络启动 (默认)"
             echo "  $0 --no-net                               # 不带网络启动"
             echo "  $0 --cfg virt-blk-shell --disk 100M      # ext4 文件系统 + native_shell"
-            echo "  $0 --cfg virt-blk --disk 100M            # 仅 VirtIO 块设备测试"
+            echo "  $0 --cfg virt-blk --disk 100M            # 仅 VirtIO 块设备测试
+  $0 --cfg uart-test --uart                # virtio-serial Vcon 服务器 + 客户端"
             echo "  $0 --host-port 8080                      # 自定义转发端口"
             echo "  $0 --disk 512M                           # 512MB 虚拟磁盘"
             echo "  $0 --no-disk                             # 禁用虚拟磁盘"
@@ -262,6 +269,18 @@ if [ -z "$DISK_SIZE" ]; then
     echo "警告: ext4 文件系统需要虚拟磁盘，请添加 --disk 100M 或使用默认启动"
 fi
 
+# ---- 串口参数 (virtio-serial, bus.2) ----
+UART_ARGS=""
+if [ -n "$UART_MODE" ]; then
+    UART_ARGS="-chardev pty,id=uart_pty,mux=off -device virtio-serial-device,bus=virtio-mmio-bus.2 -device virtconsole,chardev=uart_pty"
+    echo ""
+    echo "串口设备: virtio-serial (bus=virtio-mmio-bus.2 → 0xa000400)"
+    echo "  pty 路径将在 QEMU 启动时打印，例如:"
+    echo "    char device redirected to /dev/pts/5 (label uart_pty)"
+    echo "  连接命令: picocom /dev/pts/5  或  cat /dev/pts/5"
+    echo "  使用配置: --cfg uart-test"
+fi
+
 echo ""
 echo "使用架构: $MACHINE_TYPE"
 echo "镜像路径: $IMAGE"
@@ -286,4 +305,5 @@ $QEMU_ARCH \
     $SERIAL_ARGS \
     $GPU_ARGS \
     $NET_ARGS \
-    $DISK_ARGS
+    $DISK_ARGS \
+    $UART_ARGS

@@ -26,6 +26,13 @@ Io.hw_add_devices(function()
     Resource.reg0 = Io.Res.mmio(0x0a000200, 0x0a0003ff);
     Resource.irq0 = Io.Res.irq(32 + 17, Io.Resource.Irq_type_raising_edge);
   end)
+
+  -- VirtIO-MMIO slot 2 (virtio-serial, bus=virtio-mmio-bus.2)
+  SLOT2 = Io.Hw.Device(function()
+    compatible = { "virtio,mmio", "turingos,uart" };
+    Resource.reg0 = Io.Res.mmio(0x0a000400, 0x0a0005ff);
+    Resource.irq0 = Io.Res.irq(32 + 18, Io.Resource.Irq_type_raising_edge);
+  end)
 end)
 
 local hw = Io.system_bus()
