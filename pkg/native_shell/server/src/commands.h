@@ -56,3 +56,6 @@ void task_unregister(const char *name);
 
 /* Ctrl+C interrupt flag — set by main's SIGINT handler or stdin polling */
 extern volatile sig_atomic_t g_shell_interrupt;
+
+/* Set by main loop when trailing '&' is detected; consumed by cmd_run */
+extern bool g_run_background;

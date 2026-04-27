@@ -723,19 +723,17 @@ void cmd_run(int argc, char **argv)
 
     const char *program = argv[1];
 
-    klog_info(KLOG_SHELL, "run: starting %s", program);
+    bool background = g_run_background;
+    g_run_background = false;
 
-    // 创建任务管理器
+    klog_info(KLOG_SHELL, "run: starting %s%s", program, background ? " &" : "");
+
     static Simple_task_manager task_manager;
 
-    // 解析参数
     char *const *exec_argv = &argv[1];
-
-    // 使用当前环境变量
     extern char **environ;
     char *const *exec_envp = environ;
 
-    // 启动任务
     auto *task = task_manager.spawn(program, exec_argv, exec_envp);
 
     if (!task) {
@@ -746,8 +744,13 @@ void cmd_run(int argc, char **argv)
 
     klog_info(KLOG_SHELL, "run: spawned %s (task_cap=%lu)", program, task->task_cap);
 
-    int exit_code = task_manager.wait(task);
+    if (background) {
+        task_register(program, "background task");
+        printf("[bg] %s started (task_cap=%lu)\n", program, task->task_cap);
+        return;
+    }
 
+    int exit_code = task_manager.wait(task);
     klog_info(KLOG_SHELL, "run: %s exited code=%d", program, exit_code);
     printf("run: task exited with code: %d\n", exit_code);
 }

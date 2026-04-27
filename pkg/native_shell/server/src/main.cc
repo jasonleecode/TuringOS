@@ -24,6 +24,7 @@ static constexpr int MAX_LINE = 4096;
 
 volatile sig_atomic_t g_shell_interrupt = 0;
 static volatile bool  g_cmd_running     = false;
+bool                  g_run_background  = false;
 
 /* ---- Keyboard ring buffer (replaces pipe — pipe() not in L4Re) ---- */
 static char            g_kbd_buf[256];
@@ -234,19 +235,23 @@ int main(int argc, char const* const* argv)
             continue;
         }
 
-        // Detect output redirection: scan argv for bare '>'
+        // Detect '&' (background) and '>' (redirection), strip both from argv
         const char *redir_path = nullptr;
+        bool background = false;
         int new_argc = 0;
         for (int i = 0; i < cmd_argc; i++) {
             if (strcmp(cmd_argv[i], ">") == 0 && i + 1 < cmd_argc) {
                 redir_path = cmd_argv[i + 1];
-                i++;            // skip filename too
+                i++;
+            } else if (strcmp(cmd_argv[i], "&") == 0) {
+                background = true;
             } else {
                 cmd_argv[new_argc++] = cmd_argv[i];
             }
         }
         cmd_argv[new_argc] = nullptr;
         cmd_argc = new_argc;
+        g_run_background = background;
 
         // Set up redirection: open file, save old stdout fd, dup2
         int saved_stdout = -1;
