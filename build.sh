@@ -234,24 +234,41 @@ build_kernel() {
 # 必须在每次构建前调用，确保新增包能被构建系统发现
 sync_pkg_symlinks() {
     local l4mk_pkg="$PROJ_ROOT/l4mk/pkg"
+
+    # 清理失效的符号链接（目标不存在的链接会导致编译报错）
+    for lnk in "$l4mk_pkg"/*; do
+        [ -L "$lnk" ] || continue
+        local abs_target
+        abs_target=$(cd "$(dirname "$lnk")" && realpath -m "$(readlink "$lnk")" 2>/dev/null)
+        if [ ! -e "$abs_target" ]; then
+            rm "$lnk"
+            info "删除失效符号链接: l4mk/pkg/$(basename "$lnk")"
+        fi
+    done
+
+    # l4re-core 指向 l4re 子模块
     if [ ! -e "$l4mk_pkg/l4re-core" ]; then
         ln -s ../../l4re "$l4mk_pkg/l4re-core"
         info "创建符号链接: l4mk/pkg/l4re-core -> ../../l4re"
     fi
+
     for pkg_dir in "$PROJ_ROOT"/pkg/*/; do
         local pkg_name
         pkg_name="$(basename "$pkg_dir")"
         if [ ! -f "${pkg_dir}Control" ]; then
-            # 命名空间目录（如 pkg/filesystem/）：遍历其下的子包
+            # 命名空间目录（如 pkg/lvgl/）：只创建命名空间目录本身的链接。
+            # pkgfind 会通过命名空间链接发现其中的子包（lvgl/liblvgl、lvgl/demo），
+            # 不需要额外创建各子包的独立链接——否则会导致 pkgfind 重复发现同一个包。
+            # 命名空间目录链接也是 Makeconf.local 路径重映射所必需的：
+            #   CURDIR 解析为 pkg/lvgl/liblvgl/src，重映射后 SRC_DIR = l4mk/pkg/lvgl/liblvgl/src
+            local has_subpkg=0
             for subpkg_dir in "${pkg_dir}"*/; do
-                [ -f "${subpkg_dir}Control" ] || continue
-                local subpkg_name
-                subpkg_name="$(basename "$subpkg_dir")"
-                if [ ! -e "$l4mk_pkg/$subpkg_name" ]; then
-                    ln -s "../../pkg/$pkg_name/$subpkg_name" "$l4mk_pkg/$subpkg_name"
-                    info "创建符号链接: l4mk/pkg/$subpkg_name -> ../../pkg/$pkg_name/$subpkg_name"
-                fi
+                [ -f "${subpkg_dir}Control" ] && { has_subpkg=1; break; }
             done
+            if [ "$has_subpkg" -eq 1 ] && [ ! -e "$l4mk_pkg/$pkg_name" ]; then
+                ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
+                info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
+            fi
         else
             if [ ! -e "$l4mk_pkg/$pkg_name" ]; then
                 ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"

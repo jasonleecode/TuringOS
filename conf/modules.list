@@ -3,6 +3,26 @@
 # ============================================================
 
 # ------------------------------------------------------------
+# Entry: native-shell - 默认系统 (native_shell + fb-drv + ext4 + 网络)
+# ------------------------------------------------------------
+entry native-shell
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/native-shell.cfg
+module l4re
+module ned
+module native-shell.cfg
+module virt-full.io
+module io
+module rtc
+module virtio-block-driver
+module ext4fs
+module fb-drv
+module native_shell
+module libreadline.so
+
+# ------------------------------------------------------------
 # Entry: demo - 默认演示系统 (使用 native_shell)
 # ------------------------------------------------------------
 entry demo
@@ -73,6 +93,34 @@ roottask moe rom/fb-test.cfg
 module l4re
 module ned
 module fb-test.cfg
+module fb-test
+
+# ------------------------------------------------------------
+# Entry: lvgl-demo - LVGL 图形演示 (需要 QEMU --gpu 启动)
+# ------------------------------------------------------------
+entry lvgl-demo
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/lvgl-demo.cfg
+module l4re
+module ned
+module lvgl-demo.cfg
+module fb-drv
+module lvgl-demo
+
+# ------------------------------------------------------------
+# Entry: fb-drv - 帧缓冲驱动服务器 + 客户端测试 (需要 QEMU --gpu 启动)
+# ------------------------------------------------------------
+entry fb-drv
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/fb-drv.cfg
+module l4re
+module ned
+module fb-drv.cfg
+module fb-drv
 module fb-test
 
 # ------------------------------------------------------------

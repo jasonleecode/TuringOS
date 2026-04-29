@@ -10,11 +10,11 @@ PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
 # ---- 命令行参数解析 ----
 NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
-GPU_MODE=""      # GPU 模式：启用 ramfb + 显示输出
+GPU_MODE="ramfb" # GPU 模式：启用 ramfb + 显示输出
 VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
 CFG_NAME="native-shell" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
-FB_RES="1280x720" # 帧缓冲分辨率
+FB_RES="800x600"  # 帧缓冲分辨率
 SMP_CPUS=2       # 默认单核（SMP 模式下 Fiasco 调度器存在竞态，暂时禁用）
 DISK_SIZE="100M" # 虚拟磁盘大小（设为空字符串禁用磁盘）
 UART_MODE=""     # virtio-serial 串口（--uart 启用）

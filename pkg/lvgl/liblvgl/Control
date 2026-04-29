@@ -1,0 +1,2 @@
+provides: liblvgl
+requires: libc stdlibs

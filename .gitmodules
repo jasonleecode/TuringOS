@@ -84,3 +84,7 @@
 [submodule "pkg/filesystem/ext4/contrib"]
 	path = pkg/filesystem/ext4/contrib
 	url = https://github.com/gkostka/lwext4.git
+[submodule "pkg/lvgl/liblvgl/src/lvgl"]
+	path = pkg/lvgl/liblvgl/src/lvgl
+	url = https://github.com/lvgl/lvgl.git
+	branch = release/v9.2
