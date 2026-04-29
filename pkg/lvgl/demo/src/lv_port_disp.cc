@@ -1,14 +1,19 @@
 /*
  * lv_port_disp.cc — LVGL display driver for L4Re / fb-drv
  *
- * Connects to fb-drv via the "fb" Goos cap, maps the framebuffer,
- * and registers it as an LVGL full-screen draw buffer.
- * ramfb is auto-refresh, so the flush callback just calls refresh + flush_ready.
+ * Uses partial rendering mode with a full-screen-sized off-screen buffer.
+ * LVGL renders only the bounding box of dirty widgets into the buffer (one
+ * render pass since the buffer is never too small), then flush_cb copies
+ * just that rectangle row-by-row to the physical FB.  This avoids both
+ * mid-render blank flashes and the expensive full-screen memcpy that
+ * FULL mode incurs on every slider drag or button press.
  */
 
 #include <l4/re/util/video/goos_fb>
 #include <l4/re/video/view>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 
 extern "C" {
 #include "lvgl/lvgl.h"
@@ -19,12 +24,21 @@ extern "C" {
 static L4Re::Util::Video::Goos_fb s_goos_fb;
 static unsigned s_width;
 static unsigned s_height;
+static unsigned s_bpp;
+static void    *s_fb;
 
-static void flush_cb(lv_display_t *disp,
-                     const lv_area_t * /*area*/,
-                     uint8_t * /*px_map*/)
+static void flush_cb(lv_display_t *disp, const lv_area_t *area, uint8_t *px_map)
 {
-    s_goos_fb.refresh(0, 0, s_width, s_height);
+    int32_t w = area->x2 - area->x1 + 1;
+    int32_t h = area->y2 - area->y1 + 1;
+    uint8_t *src = px_map;
+    for (int32_t y = area->y1; y <= area->y2; ++y) {
+        uint8_t *dst = (uint8_t *)s_fb
+                       + ((unsigned)y * s_width + (unsigned)area->x1) * s_bpp;
+        memcpy(dst, src, (unsigned)w * s_bpp);
+        src += (unsigned)w * s_bpp;
+    }
+    s_goos_fb.refresh(area->x1, area->y1, w, h);
     lv_display_flush_ready(disp);
 }
 
@@ -51,24 +65,29 @@ void lv_port_disp_init()
 
     s_width  = vi.width;
     s_height = vi.height;
-    unsigned bpp = vi.pixel_info.bytes_per_pixel();
+    s_bpp    = vi.pixel_info.bytes_per_pixel();
 
-    void *fb = s_goos_fb.attach_buffer();
-    if (!fb)
+    s_fb = s_goos_fb.attach_buffer();
+    if (!s_fb)
     {
         printf("[lv_port] ERROR: cannot map framebuffer\n");
         return;
     }
 
-    printf("[lv_port] FB %ux%u %ubpp at %p\n", s_width, s_height, bpp * 8, fb);
+    printf("[lv_port] FB %ux%u %ubpp at %p\n", s_width, s_height, s_bpp * 8, s_fb);
+
+    // Full-screen off-screen buffer: any dirty bounding box fits in one render pass
+    void *draw_buf = malloc(s_width * s_height * s_bpp);
+    if (!draw_buf)
+    {
+        printf("[lv_port] ERROR: cannot allocate draw buffer\n");
+        return;
+    }
 
     lv_display_t *disp = lv_display_create(s_width, s_height);
     lv_display_set_color_format(disp, LV_COLOR_FORMAT_XRGB8888);
-
-    // Use physical framebuffer directly as the LVGL draw buffer (zero-copy)
-    lv_display_set_buffers(disp, fb, nullptr,
-                           s_width * s_height * bpp,
-                           LV_DISPLAY_RENDER_MODE_FULL);
-
+    lv_display_set_buffers(disp, draw_buf, nullptr,
+                           s_width * s_height * s_bpp,
+                           LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
 }

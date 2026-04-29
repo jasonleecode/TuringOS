@@ -1,13 +1,10 @@
 /*
  * lvgl-demo: LVGL v9 on L4Re with fb-drv display backend
- *
- * Threads:
- *   tick thread  — calls lv_tick_inc(1) every 1 ms
- *   main thread  — runs lv_timer_handler() loop
  */
 
 #include <l4/util/util.h>
-#include <pthread.h>
+#include <l4/sys/kip.h>
+#include <l4/re/env.h>
 #include <cstdio>
 
 extern "C" {
@@ -18,14 +15,9 @@ extern "C" {
 #include "lv_port_disp.h"
 #include "lv_port_input.h"
 
-static void *tick_thread(void *)
+static inline uint32_t get_ms()
 {
-    while (true)
-    {
-        lv_tick_inc(1);
-        l4_sleep(1);
-    }
-    return nullptr;
+    return (uint32_t)(l4_kip_clock(l4re_kip()) / 1000ULL);
 }
 
 int main()
@@ -36,17 +28,19 @@ int main()
     lv_port_disp_init();
     lv_port_input_init();
 
-    pthread_t tid;
-    pthread_create(&tid, nullptr, tick_thread, nullptr);
-
     lv_demo_widgets();
 
     printf("[lvgl-demo] UI loop running\n");
 
+    uint32_t last_ms = get_ms();
     while (true)
     {
+        uint32_t now_ms = get_ms();
+        lv_tick_inc(now_ms - last_ms);
+        last_ms = now_ms;
+
         uint32_t delay = lv_timer_handler();
-        l4_sleep(delay ? delay : 1);
+        l4_sleep(delay > 16 ? 16 : (delay ? delay : 1));
     }
 
     return 0;

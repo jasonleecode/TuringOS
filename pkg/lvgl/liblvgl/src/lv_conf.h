@@ -15,7 +15,7 @@
    MEMORY SETTINGS
  *=========================*/
 #define LV_MEM_CUSTOM 0
-#define LV_MEM_SIZE   (512U * 1024U)  /* 512 KB */
+#define LV_MEM_SIZE   (2U * 1024U * 1024U)  /* 2 MB */
 #define LV_MEM_POOL_INCLUDE <stdlib.h>
 #define LV_MEM_POOL_ALLOC   malloc
 #define LV_MEM_POOL_FREE    free
@@ -24,7 +24,7 @@
    HAL SETTINGS
  *====================*/
 #define LV_TICK_CUSTOM 0
-#define LV_DEF_REFR_PERIOD 33  /* [ms] ~30 fps */
+#define LV_DEF_REFR_PERIOD 16  /* [ms] ~60 fps target */
 
 /*=====================
    OS / THREADING

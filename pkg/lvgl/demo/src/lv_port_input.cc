@@ -53,8 +53,8 @@ enum Mmio_reg : unsigned {
     Mmio_queue_num       = 0x38,
     Mmio_queue_align     = 0x3c,
     Mmio_queue_pfn       = 0x40,
-    Mmio_queue_notify    = 0x60,
-    Mmio_status          = 0x74,
+    Mmio_queue_notify    = 0x050,
+    Mmio_status          = 0x070,
     Mmio_config          = 0x100,
 };
 
@@ -469,6 +469,7 @@ void lv_port_input_init()
         lv_indev_t *indev = lv_indev_create();
         lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
         lv_indev_set_read_cb(indev, ptr_read_cb);
+        lv_timer_set_period(lv_indev_get_read_timer(indev), 16);
         printf("[lv_input] Registered pointer indev (tablet)\n");
     }
     if (s_kb)
@@ -476,6 +477,7 @@ void lv_port_input_init()
         lv_indev_t *indev = lv_indev_create();
         lv_indev_set_type(indev, LV_INDEV_TYPE_KEYPAD);
         lv_indev_set_read_cb(indev, key_read_cb);
+        lv_timer_set_period(lv_indev_get_read_timer(indev), 16);
         printf("[lv_input] Registered keypad indev (keyboard)\n");
     }
 }
