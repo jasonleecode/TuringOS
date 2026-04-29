@@ -201,6 +201,7 @@ fi
 
 # ---- GPU / 显示参数 ----
 GPU_ARGS=""
+INPUT_ARGS=""
 DISPLAY_ARGS="-nographic"
 SERIAL_ARGS="-serial mon:stdio"
 
@@ -208,6 +209,9 @@ if [ -n "$GPU_MODE" ]; then
     # ramfb: QEMU 将帧缓冲暴露给 fw_cfg，bootstrap 自动检测并初始化
     # 分辨率通过 fw_cfg "opt/org.l4re/fb_res" 传递
     GPU_ARGS="-device ramfb -fw_cfg name=opt/org.l4re/fb_res,string=${FB_RES}"
+
+    # virtio-input: keyboard (bus.3) + tablet (bus.4) for LVGL pointer/keypad
+    INPUT_ARGS="-device virtio-keyboard-device,bus=virtio-mmio-bus.3 -device virtio-tablet-device,bus=virtio-mmio-bus.4"
 
     case "$GPU_DISPLAY" in
         vnc)
@@ -237,6 +241,7 @@ if [ -n "$GPU_MODE" ]; then
     SERIAL_ARGS="-serial stdio -monitor none"
 
     echo "  启动配置: 使用 conf/fb-test.cfg 测试帧缓冲"
+    echo "  输入设备: virtio-keyboard (bus.3) + virtio-tablet (bus.4)"
 fi
 
 # ---- 磁盘参数 ----
@@ -304,6 +309,7 @@ $QEMU_ARCH \
     $DISPLAY_ARGS \
     $SERIAL_ARGS \
     $GPU_ARGS \
+    $INPUT_ARGS \
     $NET_ARGS \
     $DISK_ARGS \
     $UART_ARGS

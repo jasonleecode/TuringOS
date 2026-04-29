@@ -16,6 +16,7 @@ extern "C" {
 }
 
 #include "lv_port_disp.h"
+#include "lv_port_input.h"
 
 static void *tick_thread(void *)
 {
@@ -33,6 +34,7 @@ int main()
 
     lv_init();
     lv_port_disp_init();
+    lv_port_input_init();
 
     pthread_t tid;
     pthread_create(&tid, nullptr, tick_thread, nullptr);

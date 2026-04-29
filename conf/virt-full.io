@@ -33,6 +33,20 @@ Io.hw_add_devices(function()
     Resource.reg0 = Io.Res.mmio(0x0a000400, 0x0a0005ff);
     Resource.irq0 = Io.Res.irq(32 + 18, Io.Resource.Irq_type_raising_edge);
   end)
+
+  -- VirtIO-MMIO slot 3 (virtio-keyboard, bus=virtio-mmio-bus.3)
+  SLOT3 = Io.Hw.Device(function()
+    compatible = { "virtio,mmio", "turingos,input" };
+    Resource.reg0 = Io.Res.mmio(0x0a000600, 0x0a0007ff);
+    Resource.irq0 = Io.Res.irq(32 + 19, Io.Resource.Irq_type_raising_edge);
+  end)
+
+  -- VirtIO-MMIO slot 4 (virtio-tablet, bus=virtio-mmio-bus.4)
+  SLOT4 = Io.Hw.Device(function()
+    compatible = { "virtio,mmio", "turingos,input" };
+    Resource.reg0 = Io.Res.mmio(0x0a000800, 0x0a0009ff);
+    Resource.irq0 = Io.Res.irq(32 + 20, Io.Resource.Irq_type_raising_edge);
+  end)
 end)
 
 local hw = Io.system_bus()
@@ -43,8 +57,15 @@ Io.add_vbusses {
     RTC = wrap(hw:match("arm,pl031"))
   end),
 
-  -- Block driver gets both virtio slots; it picks the block device by DeviceID
+  -- Block driver gets only net/blk/uart slots (not input)
   vbus_blk = Io.Vi.System_bus(function()
-    DEVS = wrap(hw:match("virtio,mmio"))
+    NET  = wrap(hw.SLOT0)
+    BLK  = wrap(hw.SLOT1)
+    UART = wrap(hw.SLOT2)
+  end),
+
+  -- Input consumer gets only keyboard + tablet (turingos,input compatible)
+  vbus_input = Io.Vi.System_bus(function()
+    DEVS = wrap(hw:match("turingos,input"))
   end),
 }
