@@ -65,9 +65,9 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 |------|------|
 | [✓] | lwIP 集成，virtio-net，TCP echo server |
 | [✓] | `net` / `ifconfig` 命令集成到 native_shell |
-| 待做 | UDP 支持验证 |
-| 待做 | DNS 解析 |
-| 待做 | ping 命令 |
+| [✓] | UDP 支持验证（udp 命令，echo server port 5001，hostfwd=udp::5556-:5001） |
+| [✓] | DNS 解析（nslookup 命令，lwip_getaddrinfo，DNS 服务器 10.0.2.3） |
+| [✓] | ping 命令（ICMP raw socket，支持 -c 计数，RTT 统计） |
 
 ### 串口通信
 

@@ -57,11 +57,9 @@ Io.add_vbusses {
     RTC = wrap(hw:match("arm,pl031"))
   end),
 
-  -- Block driver gets only net/blk/uart slots (not input)
+  -- Block driver gets only the VirtIO block device (SLOT1)
   vbus_blk = Io.Vi.System_bus(function()
-    NET  = wrap(hw.SLOT0)
-    BLK  = wrap(hw.SLOT1)
-    UART = wrap(hw.SLOT2)
+    BLK = wrap(hw.SLOT1)
   end),
 
   -- Input consumer gets only keyboard + tablet (turingos,input compatible)
