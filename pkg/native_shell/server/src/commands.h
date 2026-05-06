@@ -45,7 +45,11 @@ void cmd_radio(int argc, char **argv);
 /* network */
 void cmd_net(int argc, char **argv);
 void cmd_ifconfig(int argc, char **argv);
-void net_auto_init(); /* start network stack in background at boot */
+void cmd_ping(int argc, char **argv);
+void cmd_nslookup(int argc, char **argv);
+void cmd_udp(int argc, char **argv);
+void net_auto_init();  /* start network stack in background at boot */
+bool net_is_ready();   /* true once virtio-net + lwIP fully up */
 
 /* system */
 void cmd_list_tasks(int argc, char **argv);

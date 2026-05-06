@@ -187,16 +187,18 @@ fi
 # ---- 网络参数 ----
 NET_ARGS=""
 if [ "$NET_MODE" = "shell" ]; then
-    NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${HOST_PORT}-:5000 -device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.0"
+    NET_ARGS="-netdev user,id=net0,hostfwd=tcp::${HOST_PORT}-:5000,hostfwd=udp::5556-:5001 -device virtio-net-device,netdev=net0,bus=virtio-mmio-bus.0"
     echo ""
     echo "网络模式: 用户 NAT (slirp)"
-    echo "  客户机 IP : 10.0.2.15"
-    echo "  客户机端口: 5000 (TCP echo server)"
-    echo "  主机转发  : localhost:${HOST_PORT} → 客户机:5000"
+    echo "  客户机 IP : 10.0.2.15   DNS: 10.0.2.3"
+    echo "  TCP 转发  : localhost:${HOST_PORT} → 客户机:5000 (TCP echo)"
+    echo "  UDP 转发  : localhost:5556 → 客户机:5001 (UDP echo)"
     echo ""
     echo "启动后在 shell 中输入 'net' 启动 TCP echo server"
     echo "测试命令 (在另一终端):"
     echo "  python3 tools/tcp_client.py --port ${HOST_PORT}"
+    echo "  echo 'hello' | nc -u localhost 5556   # UDP echo (需先输入 'udp')"
+    echo "  ping 10.0.2.2                         # 在 shell 内 ping QEMU 网关"
 fi
 
 # ---- GPU / 显示参数 ----

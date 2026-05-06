@@ -32,6 +32,7 @@
 #include <lwip/etharp.h>
 #include <lwip/ip4_addr.h>
 #include <lwip/netif.h>
+#include <lwip/dns.h>
 #include <netif/ethernet.h>
 
 #include <l4/re/env>
@@ -186,8 +187,10 @@ static l4_uint16_t n_tx_avail_idx = 0;
 
 static struct netif n_netif;
 
-static bool g_net_running = false;  /* true once server thread started */
-static bool g_net_stack_ready = false; /* true once hw+lwIP init done */
+static bool g_net_running = false;     /* true once server thread started */
+       bool g_net_stack_ready = false; /* true once hw+lwIP init done */
+
+bool net_is_ready() { return g_net_stack_ready; }
 
 static pthread_mutex_t g_net_init_mtx  = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t  g_net_init_cv   = PTHREAD_COND_INITIALIZER;
@@ -663,6 +666,13 @@ static void net_configure_ip()
   printf("net: IP %s", ip4addr_ntoa(&ip));
   printf("  netmask %s", ip4addr_ntoa(&nm));
   printf("  gw %s\n", ip4addr_ntoa(&gw));
+
+  /* Configure QEMU slirp DNS server (always at 10.0.2.3 in user-mode NAT) */
+  ip_addr_t dns_addr;
+  IP_ADDR4(&dns_addr, 10, 0, 2, 3);
+  dns_setserver(0, &dns_addr);
+  klog_info(KLOG_NET, "net: DNS server set to 10.0.2.3");
+  printf("net: DNS 10.0.2.3\n");
 }
 
 /* ------------------------------------------------------------------ */

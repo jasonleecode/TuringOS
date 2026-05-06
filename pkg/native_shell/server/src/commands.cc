@@ -51,8 +51,11 @@ shell_cmd commands[] = {
     { "temp",       "Read DS18B20 temperature  [pin]",                 cmd_temp  },
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
     /* network */
-    { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net },
+    { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net      },
     { "ifconfig",   "Show network interfaces and IP info",                  cmd_ifconfig },
+    { "ping",       "ICMP ping  <host> [-c count]",                        cmd_ping     },
+    { "nslookup",   "DNS lookup  <hostname>",                              cmd_nslookup },
+    { "udp",        "Start UDP echo server on port 5001",                  cmd_udp      },
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);
