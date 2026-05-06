@@ -16,19 +16,28 @@
 | [✓] | klog 日志系统（dmesg 命令，ring buffer，severity 过滤） |
 | [✓] | uptime 命令（CLOCK_MONOTONIC，天/时/分/秒格式） |
 | [✓] | i.MX6UL（Cortex-A7）平台适配（QEMU mcimx6ul-evk，CONFIG_CPU_VIRT 已禁用） |
+| [✓] | 终端登录（`login:` / `Password:` 提示，密码显示 `*`，默认 root/12345678） |
+| [✓] | 构建工具链升级：virt/bbb/imx6ul 统一使用 GCC 12（上游要求 GCC 11+） |
 
 ---
 
-## P0.5 — 上游同步（阻塞性）
+## P0.5 — 上游同步 [✓]
 
-### 同步 l4re / kernel fork 分支
+### 同步 l4re / kernel / l4mk fork 分支
 
-fork 的 l4re 和 kernel（Fiasco）分支已落后于上游主分支，需要 merge 后才能继续追踪新功能和安全修复。
+已完成三个子模块同步（2026-05-06），无冲突，构建验证通过：
 
-- [ ] 确认当前 fork 落后的 commit 数量（`git log HEAD..upstream/main`）
-- [ ] merge 上游 l4re-core 变更，解决冲突，验证构建不回归
-- [ ] merge 上游 fiasco kernel 变更，验证 QEMU virt / BBB 启动正常
-- [ ] 更新 submodule 引用，提交到 TuringOS 主仓库
+| 子模块 | 上游 | 同步 commit 数 | 自定义 commit 数 |
+|--------|------|----------------|-----------------|
+| kernel (Fiasco) | kernkonzept/fiasco r-2026-W17 | +354 | 1（BBB 模板） |
+| l4re | kernkonzept/l4re-core | +140 | 1（VFS getdents） |
+| l4mk | kernkonzept/mk | +51 | 19（启动配置） |
+
+**注**：上游 Fiasco r-2026-W17 包含 ARM generic timer one-shot 修复，缓解了
+SMP 双核下 `schedule_in_progress` 断言偶发崩溃（context.cpp:755）。该根因为
+Fiasco 已知设计缺陷，上游暂无直接补丁。
+
+**后续**：建立定期同步机制（建议每月跟一次上游 tag）。
 
 ---
 
@@ -118,9 +127,10 @@ QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity �
 参考 QNX 设计，在 L4Re 之上提供 POSIX 接口（进程、信号、文件描述符）。
 涉及：驱动框架统一、libc 集成、syscall 适配。
 
-### 终端登录
+### 终端登录 [✓]
 
-用户名 / 密码认证，串口或 VNC 终端登录界面。
+串口登录已实现：`login:` 用户名回显，`Password:` 星号掩码，3 次失败后重试。
+默认账号 root / 12345678。
 
 ### 功耗与电源管理
 
