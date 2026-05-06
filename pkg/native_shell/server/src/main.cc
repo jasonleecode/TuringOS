@@ -3,6 +3,7 @@
 #include <cstring>
 #include <signal.h>
 #include <setjmp.h>
+#include <termios.h>
 #include <unistd.h>
 #include <fcntl.h>
 #include <pthread.h>
@@ -91,23 +92,40 @@ static constexpr const char *LOGIN_USER = "root";
 static constexpr const char *LOGIN_PASS = "12345678";
 static constexpr int MAX_LOGIN_ATTEMPTS = 3;
 
-static void read_echoed(char *buf, int maxlen, bool echo)
+// read_login_line: read one line from the kbd ring buffer.
+//   show_star=false (username): rely on serial echo, don't putchar again.
+//   show_star=true  (password): disable serial echo via tcsetattr, show '*' manually.
+static void read_login_line(char *buf, int maxlen, bool show_star)
 {
+    struct termios old_t;
+    bool echo_disabled = false;
+    if (show_star && tcgetattr(STDIN_FILENO, &old_t) == 0) {
+        struct termios t = old_t;
+        t.c_lflag &= ~(unsigned)(ECHO | ECHOE | ECHOK | ECHONL);
+        tcsetattr(STDIN_FILENO, TCSANOW, &t);
+        echo_disabled = true;
+    }
+
     int i = 0;
     for (;;) {
         int c = kbd_pop();
         if (c == '\n' || c == '\r') {
-            putchar('\n'); fflush(stdout);
+            if (show_star) { putchar('\n'); fflush(stdout); } // echo disabled: need manual newline
             break;
         } else if ((c == '\b' || c == 127) && i > 0) {
             i--;
-            if (echo) { printf("\b \b"); fflush(stdout); }
+            if (show_star) { printf("\b \b"); fflush(stdout); } // erase the '*' we drew
+            else           { printf(" \b");   fflush(stdout); } // erase serial-echoed char
         } else if (i < maxlen - 1 && c >= 0x20) {
             buf[i++] = (char)c;
-            if (echo) { putchar(c); fflush(stdout); }
+            if (show_star) { putchar('*'); fflush(stdout); }
+            // else: serial echo already shows the char
         }
     }
     buf[i] = '\0';
+
+    if (echo_disabled)
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_t);
 }
 
 static bool do_login()
@@ -115,9 +133,9 @@ static bool do_login()
     char user[64], pass[64];
     for (int attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt++) {
         printf("login: "); fflush(stdout);
-        read_echoed(user, sizeof(user), true);
+        read_login_line(user, sizeof(user), false);
         printf("Password: "); fflush(stdout);
-        read_echoed(pass, sizeof(pass), false);
+        read_login_line(pass, sizeof(pass), true);
         if (strcmp(user, LOGIN_USER) == 0 && strcmp(pass, LOGIN_PASS) == 0)
             return true;
         printf("Login incorrect\n\n");
