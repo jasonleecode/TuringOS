@@ -72,10 +72,12 @@ setup_board() {
             L4RE_BUILD="$BUILD_OUT/l4re_arm64"
             L4RE_TEMPLATE="arm64-rv-v8a"
             QEMU_CMD="qemu-system-aarch64"
+            BOOTSTRAP_ENTRY="native-shell"
             ;;
         bbb)
             BOARD_NAME="BeagleBone Black (AM335x)"
             BOARD_ARCH="ARM"
+            BOOTSTRAP_ENTRY="native-shell"
             # 优先使用 /opt 下的 ARM GNU Toolchain 12.3 (需 GCC 11+，apt 默认 GCC 9 不够)
             local _arm_opt_toolchain="/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin"
             if [ -d "$_arm_opt_toolchain" ]; then
@@ -111,13 +113,39 @@ setup_board() {
             L4RE_BUILD="$BUILD_OUT/l4re_virt"
             L4RE_TEMPLATE="arm-virt-v7a"
             QEMU_CMD="qemu-system-arm -M virt -cpu cortex-a15"
+            BOOTSTRAP_ENTRY="native-shell"
+            ;;
+        imx6ul)
+            BOARD_NAME="i.MX6UL (Cortex-A7, QEMU mcimx6ul-evk)"
+            BOARD_ARCH="ARM"
+            # 优先使用 /opt 下的 ARM GNU Toolchain 12.3 (需 GCC 11+)
+            local _arm_opt_toolchain="/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin"
+            if [ -d "$_arm_opt_toolchain" ]; then
+                export PATH="$_arm_opt_toolchain:$PATH"
+                export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-linux-gnueabihf-}"
+            else
+                export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
+            fi
+            # macOS: brew 安装的工具链不在默认 PATH 中
+            local _arm_brew_prefix
+            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
+            if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
+                export PATH="$_arm_brew_prefix/bin:$PATH"
+            fi
+            KERNEL_BUILD="$BUILD_OUT/kernel_imx6ul"
+            KERNEL_TEMPLATE="arm-imx6ul"
+            L4RE_BUILD="$BUILD_OUT/l4re_imx6ul"
+            L4RE_TEMPLATE="arm-imx6ul"
+            QEMU_CMD="qemu-system-arm -M mcimx6ul-evk -cpu cortex-a7"
+            BOOTSTRAP_ENTRY="imx6ul-native-shell"
             ;;
         *)
             error "未知目标板: $board
 支持的目标板:
-  rpi4   Raspberry Pi 4B (ARM64, 默认)
-  bbb    BeagleBone Black (AM335x, ARM)
-  virt   QEMU ARM Virt (Cortex-A15)"
+  rpi4     Raspberry Pi 4B (ARM64, 默认)
+  bbb      BeagleBone Black (AM335x, ARM)
+  virt     QEMU ARM Virt (Cortex-A15)
+  imx6ul   i.MX6UL (Cortex-A7, QEMU mcimx6ul-evk)"
             ;;
     esac
 }
@@ -214,6 +242,13 @@ build_kernel() {
         mkdir -p "$(dirname "$KERNEL_BUILD")"
         info "创建内核构建目录 (模板: $KERNEL_TEMPLATE)..."
         $MAKE BUILDDIR="$KERNEL_BUILD" T="$KERNEL_TEMPLATE"
+    fi
+
+    # imx6ul: 禁用 HYP/虚拟化 — mcimx6ul-evk QEMU 不支持 PSCI HYP 模式切换
+    if [ "$BOARD" = "imx6ul" ] && [ -f "$KERNEL_BUILD/globalconfig.out" ]; then
+        info "imx6ul: 禁用 CONFIG_CPU_VIRT (mcimx6ul-evk 不支持 HYP 切换)"
+        sed -i 's/^CONFIG_CPU_VIRT=y/# CONFIG_CPU_VIRT is not set/' "$KERNEL_BUILD/globalconfig.out"
+        $MAKE -C "$KERNEL_BUILD" olddefconfig CROSS_COMPILE="$CROSS_COMPILE" 2>&1 | grep -E "^(#|CONFIG_CPU_VIRT)" || true
     fi
 
     # 编译内核
@@ -449,7 +484,7 @@ build_bootstrap() {
         info "使用启动入口: $ENTRY"
         $MAKE E="$ENTRY" elfimage
     else
-        local entry="native-shell"
+        local entry="${BOOTSTRAP_ENTRY:-native-shell}"
         info "生成启动入口: $entry"
         $MAKE E="$entry" elfimage
     fi
@@ -683,6 +718,7 @@ show_usage() {
     echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
     echo "  bbb         BeagleBone Black, AM335x ARM"
     echo "  virt        QEMU ARM Virt (Cortex-A15)"
+    echo "  imx6ul      i.MX6UL, Cortex-A7 (QEMU mcimx6ul-evk)"
     echo ""
     echo "构建目标:"
     echo "  all         完整构建 (内核 + L4Re + 引导镜像 + 收集产物)"
