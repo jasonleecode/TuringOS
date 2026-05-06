@@ -8,11 +8,14 @@
 
 | 状态 | 任务 |
 |------|------|
-| [✓] | 用户态 Shell（native_shell，含 readline、历史记录） |
+| [✓] | 用户态 Shell（native_shell，含 readline、历史记录、后台 `&` 运算符） |
 | [✓] | 构建系统包发现机制（Control 文件、PKGDIR 层级、sync_pkg_symlinks） |
-| [✓] | 多启动项配置（modules.list 已有 native-shell / tcp-server / fb-test / fb-drv） |
+| [✓] | 多启动项配置（modules.list 已有 native-shell / tcp-server / fb-test / fb-drv / lvgl-demo / uart-test） |
 | [✓] | TCP echo server（lwip + virtio-net，QEMU NAT 转发验证通过） |
 | [✓] | SMP 双核默认（run_qemu_virt.sh -smp 2，smp-test PASSED） |
+| [✓] | klog 日志系统（dmesg 命令，ring buffer，severity 过滤） |
+| [✓] | uptime 命令（CLOCK_MONOTONIC，天/时/分/秒格式） |
+| [✓] | i.MX6UL（Cortex-A7）平台适配（QEMU mcimx6ul-evk，CONFIG_CPU_VIRT 已禁用） |
 
 ---
 
@@ -47,17 +50,21 @@ fork 的 l4re 和 kernel（Fiasco）分支已落后于上游主分支，需要 m
 
 详细设计见 [ext4-implementation-plan.md](ext4-implementation-plan.md)。
 
-### 网络栈完善
+### 网络栈
 
-lwip 协议栈已集成，TCP echo server 可用。待完成：
-- `ifconfig` / `ping` 等 net tools 集成到 native_shell
-- UDP 支持验证
-- DNS 解析
+| 状态 | 子任务 |
+|------|------|
+| [✓] | lwIP 集成，virtio-net，TCP echo server |
+| [✓] | `net` / `ifconfig` 命令集成到 native_shell |
+| 待做 | UDP 支持验证 |
+| 待做 | DNS 解析 |
+| 待做 | ping 命令 |
 
-### 日志系统
+### 串口通信
 
-当前各组件直接用 `printf` 输出，缺乏统一日志级别和持久化。
-- 目标：实现简单的日志服务（severity 过滤、时间戳、可选写入存储）
+| 状态 | 子任务 |
+|------|------|
+| [✓] | virtio-serial Vcon 服务器 + uart-test 客户端（QEMU virtio-serial 验证通过） |
 
 ---
 
@@ -69,32 +76,38 @@ lwip 协议栈已集成，TCP echo server 可用。待完成：
 |------|------|
 | [✓] | fb-test：帧缓冲测试应用，QEMU ramfb 验证通过 |
 | [✓] | fb-drv 第一阶段：用户态 Goos 代理服务器，client 通过 IPC 访问帧缓冲 |
+| [✓] | LVGL v9 图形演示（lvgl-demo，QEMU virtio-gpu，流畅渲染） |
+| [✓] | virtio-input：键盘 + tablet 指针接入 LVGL（keypad + pointer indev） |
+| 待做 | 从 native_shell `run` 命令启动 lvgl-demo（需先启动 fb-drv） |
 | 待做 | fb-drv 第二阶段：多客户端 virtual buffer + 合成（轻量窗口管理器基础） |
 | 待做 | fb-drv 第三阶段：RPi4 HDMI 真实硬件路径（BCM2711 mailbox） |
-| 待做 | 简单 GUI 框架（基于 fb-drv 第二阶段） |
 
 详细设计见 [fb-drv-design.md](fb-drv-design.md)。
 
-### wamr（WebAssembly 运行时）[✓]
+### WebAssembly 运行时（wamr）[✓]
 
 移植已完成，QEMU 验证通过：`add(40, 2) = 42`。
 修复：`wasm_runtime_load` 会就地修改 buffer，传 const 数组会 segfault，需先 malloc 拷贝。
 
-### Shell 里启动程序
+### Shell 任务管理 [✓]
 
-目前 native_shell 只能运行内置命令，不能 fork/exec 其他 L4Re 任务。
-- 目标：通过 ned 或类似机制，在 shell 中动态启动已加载到 ROM 的程序
+- `&` 后台运算符，`list_tasks` 查看后台任务
+- `run` 命令：从 ROM 动态启动已加载的 L4Re 程序（`run rom/hello`）
 
-### 设备树支持
+### 传感器 / 外设驱动
 
-有 libfdt 库，但无 .dts/.dtb 文件和构建流程。RPi4 / BBB 依赖设备树。
-- 目标：补充 dts 文件、打通 dtc 编译流程、bootstrap 加载 DTB
+| 状态 | 子任务 |
+|------|------|
+| [✓] | DS18B20 温度传感器（`temp` 命令，GPIO 1-Wire） |
+| [✓] | TEF6686HN FM 收音机（`radio` 命令，I2C） |
+| [✓] | MCP2515 CAN 控制器（SPI） |
+| [✓] | AT24C02 EEPROM（I2C） |
+| 待做 | htop：实时任务监控（需要 Fiasco 调度统计接口） |
 
-### 多核心任务调度 [✓]
+### 多核任务调度 [✓]
 
 QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity 固定，
 完成 10 万次计数后原子信号 CPU0，输出 PASSED。
-run_qemu_virt.sh 默认已改为双核启动，支持 `--cfg smp-test` 选择镜像。
 
 ---
 
