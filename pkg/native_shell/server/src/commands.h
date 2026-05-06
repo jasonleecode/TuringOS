@@ -33,6 +33,7 @@ void cmd_rm(int argc, char **argv);
 void cmd_uname(int argc, char **argv);
 void cmd_env(int argc, char **argv);
 void cmd_date(int argc, char **argv);
+void cmd_uptime(int argc, char **argv);
 
 /* program execution */
 void cmd_run(int argc, char **argv);

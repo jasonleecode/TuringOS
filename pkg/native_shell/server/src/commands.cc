@@ -42,6 +42,7 @@ shell_cmd commands[] = {
     { "uname",      "Print OS/arch info",                  cmd_uname      },
     { "env",        "Print environment variables",          cmd_env        },
     { "date",       "Print current date and time",          cmd_date       },
+    { "uptime",     "Show system uptime",                   cmd_uptime     },
     { "list_tasks", "List background tasks",                cmd_list_tasks },
     { "dmesg",      "Show/manage kernel log  [-c] [-l N] [-n N] [--save]", cmd_dmesg },
     /* program execution */
@@ -314,6 +315,22 @@ void cmd_date(int argc, char **argv)
         long s = mono.tv_sec % 60;
         printf("(RTC unavailable) uptime: %02ld:%02ld:%02ld\n", h, m, s);
     }
+}
+
+void cmd_uptime(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    struct timespec mono;
+    clock_gettime(CLOCK_MONOTONIC, &mono);
+    long total = mono.tv_sec;
+    long days  = total / 86400;
+    long h     = (total % 86400) / 3600;
+    long m     = (total % 3600) / 60;
+    long s     = total % 60;
+    if (days > 0)
+        printf("up %ld day%s, %02ld:%02ld:%02ld\n", days, days == 1 ? "" : "s", h, m, s);
+    else
+        printf("up %02ld:%02ld:%02ld\n", h, m, s);
 }
 
 /* ------------------------------------------------------------------ */
