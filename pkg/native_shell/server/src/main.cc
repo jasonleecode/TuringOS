@@ -86,6 +86,45 @@ static void handle_sigint(int)
         siglongjmp(g_shell_jmp, 1);
 }
 
+/* ---- Login ---- */
+static constexpr const char *LOGIN_USER = "root";
+static constexpr const char *LOGIN_PASS = "12345678";
+static constexpr int MAX_LOGIN_ATTEMPTS = 3;
+
+static void read_echoed(char *buf, int maxlen, bool echo)
+{
+    int i = 0;
+    for (;;) {
+        int c = kbd_pop();
+        if (c == '\n' || c == '\r') {
+            putchar('\n'); fflush(stdout);
+            break;
+        } else if ((c == '\b' || c == 127) && i > 0) {
+            i--;
+            if (echo) { printf("\b \b"); fflush(stdout); }
+        } else if (i < maxlen - 1 && c >= 0x20) {
+            buf[i++] = (char)c;
+            if (echo) { putchar(c); fflush(stdout); }
+        }
+    }
+    buf[i] = '\0';
+}
+
+static bool do_login()
+{
+    char user[64], pass[64];
+    for (int attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt++) {
+        printf("login: "); fflush(stdout);
+        read_echoed(user, sizeof(user), true);
+        printf("Password: "); fflush(stdout);
+        read_echoed(pass, sizeof(pass), false);
+        if (strcmp(user, LOGIN_USER) == 0 && strcmp(pass, LOGIN_PASS) == 0)
+            return true;
+        printf("Login incorrect\n\n");
+    }
+    return false;
+}
+
 /* ---- Parse line into argv ---- */
 static int parse_line(char *line, char **argv, int max_args)
 {
@@ -195,7 +234,12 @@ int main(int argc, char const* const* argv)
     rl_attempted_completion_function = shell_completion;
 
     klog_info(KLOG_KERN, "shell ready");
-    printf("TuringOS Native Shell\n");
+    printf("\nTuringOS 1.0 (ttyS0)\n\n");
+    for (;;) {
+        if (do_login()) break;
+        printf("Too many login failures. Try again.\n\n");
+    }
+    printf("\nWelcome, %s!\n", LOGIN_USER);
     printf("Type 'help' for available commands.\n\n");
 
     char  *line = nullptr;
