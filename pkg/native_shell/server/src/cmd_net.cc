@@ -324,9 +324,9 @@ static err_t net_netif_init(struct netif *nif)
                        n_mmio_base + VTMMIO_CONFIG + i);
   nif->hwaddr_len = 6;
 
-  printf("net: MAC %02x:%02x:%02x:%02x:%02x:%02x\n",
-         nif->hwaddr[0], nif->hwaddr[1], nif->hwaddr[2],
-         nif->hwaddr[3], nif->hwaddr[4], nif->hwaddr[5]);
+  klog_info(KLOG_NET, "net: MAC %02x:%02x:%02x:%02x:%02x:%02x",
+            nif->hwaddr[0], nif->hwaddr[1], nif->hwaddr[2],
+            nif->hwaddr[3], nif->hwaddr[4], nif->hwaddr[5]);
 
   netif_set_default(nif);
 
@@ -337,7 +337,7 @@ static err_t net_netif_init(struct netif *nif)
   int r = pthread_create(&t, &attr, net_rx_thread, nif);
   pthread_attr_destroy(&attr);
   if (r != 0) {
-    printf("net: failed to create RX thread\n");
+    klog_err(KLOG_NET, "net: failed to create RX thread");
     return ERR_IF;
   }
   return ERR_OK;
@@ -365,7 +365,7 @@ static void net_prefill_rx(l4_uint32_t qsz)
 
 static bool net_virtio_init_v1()
 {
-  printf("net: legacy protocol (v1)\n");
+  klog_info(KLOG_NET, "net: legacy protocol (v1)");
   nreg_w(VTMMIO_GUEST_PAGE_SIZE, L4_PAGESIZE);
   nreg_w(VTMMIO_STATUS, VTSTS_ACKNOWLEDGE | VTSTS_DRIVER);
   __sync_synchronize();
@@ -403,13 +403,12 @@ static bool net_virtio_init_v1()
   net_prefill_rx(qsz);   /* fills avail ring and sends QUEUE_NOTIFY(0) */
 
   klog_info(KLOG_NET, "net: device ready (v1 legacy)");
-  printf("net: device ready (v1 legacy)\n");
   return true;
 }
 
 static bool net_virtio_init_v2()
 {
-  printf("net: modern protocol (v2)\n");
+  klog_info(KLOG_NET, "net: modern protocol (v2)");
   nreg_w(VTMMIO_STATUS, VTSTS_ACKNOWLEDGE | VTSTS_DRIVER);
 
   nreg_w(VTMMIO_DEV_FEAT_SEL, 0);
@@ -417,7 +416,7 @@ static bool net_virtio_init_v2()
   nreg_w(VTMMIO_DEV_FEAT_SEL, 1);
   l4_uint32_t feat1 = nreg_r(VTMMIO_DEV_FEAT) & VT_F_VERSION_1;
   if (!(feat1 & VT_F_VERSION_1)) {
-    printf("net: device does not support VERSION_1\n");
+    klog_err(KLOG_NET, "net: device does not support VERSION_1");
     return false;
   }
   nreg_w(VTMMIO_DRV_FEAT_SEL, 0); nreg_w(VTMMIO_DRV_FEAT, feat0);
@@ -426,7 +425,7 @@ static bool net_virtio_init_v2()
   nreg_w(VTMMIO_STATUS, VTSTS_ACKNOWLEDGE | VTSTS_DRIVER | VTSTS_FEATURES_OK);
   __sync_synchronize();
   if (!(nreg_r(VTMMIO_STATUS) & VTSTS_FEATURES_OK)) {
-    printf("net: FEATURES_OK rejected\n");
+    klog_err(KLOG_NET, "net: FEATURES_OK rejected");
     return false;
   }
 
@@ -474,7 +473,6 @@ static bool net_virtio_init_v2()
          VTSTS_ACKNOWLEDGE | VTSTS_DRIVER | VTSTS_FEATURES_OK | VTSTS_DRIVER_OK);
   __sync_synchronize();
   klog_info(KLOG_NET, "net: device ready (v2 modern)");
-  printf("net: device ready (v2 modern)\n");
   return true;
 }
 
@@ -490,20 +488,19 @@ static bool net_virtio_init(l4_addr_t mmio_virt, l4_uint64_t phys_base,
   l4_uint32_t devid   = nreg_r(VTMMIO_DEVICE_ID);
 
   if (magic != 0x74726976u) {
-    printf("net: bad magic 0x%08x\n", magic);
+    klog_err(KLOG_NET, "net: bad magic 0x%08x", magic);
     return false;
   }
   if (devid != VTDEV_NET) {
-    printf("net: device_id=%u, expected %u\n", devid, VTDEV_NET);
+    klog_err(KLOG_NET, "net: device_id=%u, expected %u", devid, VTDEV_NET);
     return false;
   }
   if (version != 1 && version != 2) {
-    printf("net: unsupported version %u\n", version);
+    klog_err(KLOG_NET, "net: unsupported version %u", version);
     return false;
   }
 
   klog_info(KLOG_NET, "net: found virtio-net device (v%u)", version);
-  printf("net: found virtio-net device (v%u)\n", version);
   nreg_w(VTMMIO_STATUS, 0);
   __sync_synchronize();
 
@@ -521,14 +518,14 @@ static bool net_map_mmio(l4_addr_t *virt_out)
 
   auto sigma0 = L4Re::Env::env()->get_cap<void>("sigma0");
   if (!sigma0.is_valid()) {
-    printf("net: sigma0 cap not found\n");
+    klog_err(KLOG_NET, "net: sigma0 cap not found");
     return false;
   }
 
   l4_addr_t vbase = 0;
   if (L4Re::Env::env()->rm()->reserve_area(
         &vbase, MAP_SIZE, L4Re::Rm::F::Search_addr, L4_PAGESHIFT) < 0) {
-    printf("net: reserve MMIO area failed\n");
+    klog_err(KLOG_NET, "net: reserve MMIO area failed");
     return false;
   }
 
@@ -536,7 +533,7 @@ static bool net_map_mmio(l4_addr_t *virt_out)
     l4_addr_t phys = VIRTIO_BASE + (l4_addr_t)p * L4_PAGESIZE;
     l4_addr_t virt = vbase       + (l4_addr_t)p * L4_PAGESIZE;
     if (l4sigma0_map_iomem(sigma0.cap(), phys, virt, L4_PAGESIZE, 0) < 0) {
-      printf("net: sigma0 iomem map failed page %u\n", p);
+      klog_err(KLOG_NET, "net: sigma0 iomem map failed page %u", p);
       L4Re::Env::env()->rm()->free_area(vbase);
       return false;
     }
@@ -549,15 +546,14 @@ static bool net_map_mmio(l4_addr_t *virt_out)
       continue;
     l4_uint32_t devid = regs[0x008 / 4];
     if (devid == VTDEV_NET) {
-      printf("net: virtio-net found at slot %u (phys 0x%08lx)\n",
-             i, VIRTIO_BASE + i * 0x200u);
+      klog_info(KLOG_NET, "net: virtio-net found at slot %u (phys 0x%08lx)",
+                i, VIRTIO_BASE + i * 0x200u);
       *virt_out = (l4_addr_t)regs;
       return true;
     }
   }
 
   klog_warn(KLOG_NET, "net: no virtio-net in MMIO scan");
-  printf("net: virtio-net not found in any MMIO slot\n");
   L4Re::Env::env()->rm()->free_area(vbase);
   return false;
 }
@@ -608,8 +604,8 @@ static bool net_alloc_dma(struct virtnet_dma **dma_out, l4_uint64_t *phys_out)
       &dma_addr),
     "map DMA memory → phys addr");
 
-  printf("net: DMA @ virt=%p phys=0x%llx\n",
-         (void *)vaddr, (unsigned long long)dma_addr);
+  klog_info(KLOG_NET, "net: DMA @ virt=%p phys=0x%llx",
+            (void *)vaddr, (unsigned long long)dma_addr);
 
   (void)ds.release();
   (void)dma_space.release();
@@ -672,7 +668,6 @@ static void net_configure_ip()
   IP_ADDR4(&dns_addr, 10, 0, 2, 3);
   dns_setserver(0, &dns_addr);
   klog_info(KLOG_NET, "net: DNS server set to 10.0.2.3");
-  printf("net: DNS 10.0.2.3\n");
 }
 
 /* ------------------------------------------------------------------ */
@@ -704,14 +699,14 @@ try {
   struct virtnet_dma *vdma = nullptr;
   l4_uint64_t         phys = 0;
   if (!net_alloc_dma(&vdma, &phys)) {
-    printf("net: DMA allocation failed\n");
+    klog_err(KLOG_NET, "net: DMA allocation failed");
     return nullptr;
   }
 
   /* ---- Map virtio MMIO ---- */
   l4_addr_t mmio_virt = 0;
   if (!net_map_mmio(&mmio_virt)) {
-    printf("net: no virtio-net device, skipping network init\n");
+    klog_warn(KLOG_NET, "net: no virtio-net device, skipping network init");
     return nullptr;
   }
 
@@ -720,7 +715,7 @@ try {
   n_tx_last_used = 0;
   n_tx_avail_idx = 0;
   if (!net_virtio_init(mmio_virt, phys, vdma)) {
-    printf("net: virtio init failed\n");
+    klog_err(KLOG_NET, "net: virtio init failed");
     return nullptr;
   }
 
@@ -729,7 +724,7 @@ try {
   ip4_addr_set_zero(&zero);
   if (netifapi_netif_add(&n_netif, &zero, &zero, &zero,
                          nullptr, net_netif_init, ethernet_input) != ERR_OK) {
-    printf("net: netif_add failed\n");
+    klog_err(KLOG_NET, "net: netif_add failed");
     return nullptr;
   }
   LOCK_TCPIP_CORE();
@@ -746,7 +741,6 @@ try {
   return nullptr;
 } catch (...) {
   klog_err(KLOG_NET, "net: init exception, network unavailable");
-  printf("net: init exception, network unavailable\n");
   return nullptr;
 }
 

@@ -1,2 +1,2 @@
 provides: lvgl-demo
-requires: liblvgl stdlibs libstdc++ l4re l4re_c l4re-util l4util libio-vbus libsigma0
+requires: liblvgl stdlibs libstdc++ l4re l4re_c l4re-util l4util libio-vbus libsigma0 libklog

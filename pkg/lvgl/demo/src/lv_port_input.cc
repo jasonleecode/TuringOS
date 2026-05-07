@@ -19,6 +19,7 @@
 #include <l4/sys/err.h>
 #include <l4/l4virtio/virtqueue>
 #include <l4/sigma0/sigma0.h>
+#include <l4/klog/klog.h>
 #include <cstring>
 #include <cstdio>
 
@@ -289,8 +290,8 @@ static bool setup_device(Input_dev &dev, l4_addr_t mmio_base)
     cfg[1] = 3;     // EV_ABS
     dev.is_tablet = (cfg[2] > 0);
 
-    printf("[lv_input] virtio-input at 0x%lx: %s\n",
-           mmio_base, dev.is_tablet ? "tablet" : "keyboard");
+    klog_info(KLOG_DISP, "lv_input: virtio-input at 0x%lx: %s",
+              mmio_base, dev.is_tablet ? "tablet" : "keyboard");
 
     // DMA space — Phys_space gives identity mapping on QEMU virt (no IOMMU)
     dev.dma = L4Re::chkcap(L4Re::Util::cap_alloc.alloc<L4Re::Dma_space>(),
@@ -388,7 +389,7 @@ void lv_port_input_init()
     auto vbus = L4Re::Env::env()->get_cap<L4vbus::Vbus>("input");
     if (!vbus.is_valid())
     {
-        printf("[lv_input] No 'input' cap — input disabled\n");
+        klog_warn(KLOG_DISP, "lv_input: no 'input' cap — input disabled");
         return;
     }
 
@@ -451,8 +452,8 @@ void lv_port_input_init()
         }
         if (r < 0)
         {
-            printf("[lv_input] Failed to map MMIO 0x%lx (err %d)\n",
-                   mmio_start, r);
+            klog_err(KLOG_DISP, "lv_input: failed to map MMIO 0x%lx (err %d)",
+                     mmio_start, r);
             continue;
         }
         l4_addr_t dev_base = mmio_virt + page_off;
@@ -462,7 +463,7 @@ void lv_port_input_init()
         try { ok = setup_device(idev, dev_base); }
         catch (L4::Runtime_error const &e)
         {
-            printf("[lv_input] setup error at 0x%lx: %s\n", mmio_start, e.str());
+            klog_err(KLOG_DISP, "lv_input: setup error at 0x%lx: %s", mmio_start, e.str());
         }
         if (!ok)
         {
@@ -480,7 +481,7 @@ void lv_port_input_init()
 
     if (num_devs == 0)
     {
-        printf("[lv_input] No virtio-input devices found\n");
+        klog_warn(KLOG_DISP, "lv_input: no virtio-input devices found");
         return;
     }
 
@@ -491,7 +492,7 @@ void lv_port_input_init()
         lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
         lv_indev_set_read_cb(indev, ptr_read_cb);
         lv_timer_set_period(lv_indev_get_read_timer(indev), 16);
-        printf("[lv_input] Registered pointer indev (tablet)\n");
+        klog_info(KLOG_DISP, "lv_input: registered pointer indev (tablet)");
     }
     if (s_kb)
     {
@@ -499,6 +500,6 @@ void lv_port_input_init()
         lv_indev_set_type(indev, LV_INDEV_TYPE_KEYPAD);
         lv_indev_set_read_cb(indev, key_read_cb);
         lv_timer_set_period(lv_indev_get_read_timer(indev), 16);
-        printf("[lv_input] Registered keypad indev (keyboard)\n");
+        klog_info(KLOG_DISP, "lv_input: registered keypad indev (keyboard)");
     }
 }

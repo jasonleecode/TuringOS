@@ -11,6 +11,7 @@
 
 #include <l4/re/util/video/goos_fb>
 #include <l4/re/video/view>
+#include <l4/klog/klog.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -47,19 +48,19 @@ void lv_port_disp_init()
     long err = s_goos_fb.init("fb");
     if (err < 0)
     {
-        printf("[lv_port] 'fb' cap not found (%ld), trying 'vesa'\n", err);
+        klog_warn(KLOG_DISP, "lv_port: 'fb' cap not found (%ld), trying 'vesa'", err);
         err = s_goos_fb.init("vesa");
     }
     if (err < 0)
     {
-        printf("[lv_port] ERROR: no display cap available (%ld)\n", err);
+        klog_err(KLOG_DISP, "lv_port: no display cap available (%ld)", err);
         return;
     }
 
     L4Re::Video::View::Info vi;
     if (s_goos_fb.view_info(&vi) < 0)
     {
-        printf("[lv_port] ERROR: cannot get view info\n");
+        klog_err(KLOG_DISP, "lv_port: cannot get view info");
         return;
     }
 
@@ -70,30 +71,30 @@ void lv_port_disp_init()
     {
         auto buf = s_goos_fb.buffer();
         l4_size_t buf_sz = (l4_size_t)buf->size();
-        printf("[lv_port] FB DS cap=0x%lx size=%zu\n", buf.cap(), buf_sz);
+        klog_dbg(KLOG_DISP, "lv_port: FB DS cap=0x%lx size=%zu", buf.cap(), buf_sz);
         if (buf_sz > 0) {
             void *addr = nullptr;
             int r = L4Re::Env::env()->rm()->attach(
                 &addr, buf_sz,
                 L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
                 L4::Ipc::make_cap_rw(buf), 0, L4_PAGESHIFT);
-            printf("[lv_port] rm->attach ret=%d addr=%p\n", r, addr);
+            klog_dbg(KLOG_DISP, "lv_port: rm->attach ret=%d addr=%p", r, addr);
             if (r >= 0) s_fb = addr;
         }
     }
     if (!s_fb)
     {
-        printf("[lv_port] ERROR: cannot map framebuffer\n");
+        klog_err(KLOG_DISP, "lv_port: cannot map framebuffer");
         return;
     }
 
-    printf("[lv_port] FB %ux%u %ubpp at %p\n", s_width, s_height, s_bpp * 8, s_fb);
+    klog_info(KLOG_DISP, "lv_port: FB %ux%u %ubpp at %p", s_width, s_height, s_bpp * 8, s_fb);
 
     // Full-screen off-screen buffer: any dirty bounding box fits in one render pass
     void *draw_buf = malloc(s_width * s_height * s_bpp);
     if (!draw_buf)
     {
-        printf("[lv_port] ERROR: cannot allocate draw buffer\n");
+        klog_err(KLOG_DISP, "lv_port: cannot allocate draw buffer");
         return;
     }
 

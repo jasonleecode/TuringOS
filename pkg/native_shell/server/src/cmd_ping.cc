@@ -91,6 +91,7 @@ void cmd_ping(int argc, char **argv)
     }
 
     if (!net_is_ready()) {
+        klog_warn(KLOG_NET, "ping: network not ready");
         printf("ping: network not ready\n");
         return;
     }
@@ -105,6 +106,7 @@ void cmd_ping(int argc, char **argv)
     ip4_addr_t target;
     char target_str[16];
     if (!resolve_host(host, &target, target_str, sizeof(target_str))) {
+        klog_warn(KLOG_NET, "ping: cannot resolve '%s'", host);
         printf("ping: cannot resolve '%s'\n", host);
         return;
     }
@@ -142,6 +144,7 @@ void cmd_ping(int argc, char **argv)
 
         if (sendto(s, pkt, PING_PKT_SIZE, 0,
                    (struct sockaddr *)&dst, sizeof(dst)) < 0) {
+            klog_warn(KLOG_NET, "ping: send error: %s", strerror(errno));
             printf("ping: send error: %s\n", strerror(errno));
             continue;
         }
@@ -211,6 +214,7 @@ void cmd_nslookup(int argc, char **argv)
     }
 
     if (!net_is_ready()) {
+        klog_warn(KLOG_NET, "nslookup: network not ready");
         printf("nslookup: network not ready\n");
         return;
     }
@@ -225,6 +229,7 @@ void cmd_nslookup(int argc, char **argv)
 
     int r = lwip_getaddrinfo(host, nullptr, &hints, &res);
     if (r != 0) {
+        klog_warn(KLOG_NET, "nslookup: failed to resolve '%s' (err=%d)", host, r);
         printf("nslookup: failed to resolve '%s' (err=%d)\n", host, r);
         return;
     }

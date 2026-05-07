@@ -223,7 +223,7 @@ int main(int argc, char const* const* argv)
     pthread_create(&mon, &attr, stdin_monitor, nullptr);
     pthread_attr_destroy(&attr);
 
-    klog_init();
+    klog_init(KLOG_FILE_PATH);
     klog_info(KLOG_KERN, "TuringOS native_shell starting");
 
     int r = Devfs::init();

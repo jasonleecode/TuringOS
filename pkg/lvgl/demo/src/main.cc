@@ -5,6 +5,7 @@
 #include <l4/util/util.h>
 #include <l4/sys/kip.h>
 #include <l4/re/env.h>
+#include <l4/klog/klog.h>
 #include <cstdio>
 
 extern "C" {
@@ -22,7 +23,8 @@ static inline uint32_t get_ms()
 
 int main()
 {
-    printf("[lvgl-demo] Starting\n");
+    klog_init(NULL);  /* console-only; no ext4 access in this process */
+    klog_info(KLOG_DISP, "lvgl-demo: starting");
 
     lv_init();
     lv_port_disp_init();
@@ -30,13 +32,13 @@ int main()
 
     if (!lv_port_disp_is_ready())
     {
-        printf("[lvgl-demo] No display available — exiting\n");
+        klog_err(KLOG_DISP, "lvgl-demo: no display available — exiting");
         return 1;
     }
 
     lv_demo_widgets();
 
-    printf("[lvgl-demo] UI loop running\n");
+    klog_info(KLOG_DISP, "lvgl-demo: UI loop running");
 
     uint32_t last_ms = get_ms();
     while (true)
