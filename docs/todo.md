@@ -88,7 +88,7 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 | [✓] | fb-drv 第一阶段：用户态 Goos 代理服务器，client 通过 IPC 访问帧缓冲 |
 | [✓] | LVGL v9 图形演示（lvgl-demo，QEMU virtio-gpu，流畅渲染） |
 | [✓] | virtio-input：键盘 + tablet 指针接入 LVGL（keypad + pointer indev） |
-| 待做 | 从 native_shell `run` 命令启动 lvgl-demo（需先启动 fb-drv） |
+| [✓] | 从 native_shell `run` 命令启动 lvgl-demo（`run lvgl-demo`，自动转发 fb/input cap） |
 | 待做 | fb-drv 第二阶段：多客户端 virtual buffer + 合成（轻量窗口管理器基础） |
 | 待做 | fb-drv 第三阶段：RPi4 HDMI 真实硬件路径（BCM2711 mailbox） |
 

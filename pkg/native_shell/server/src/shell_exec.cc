@@ -358,11 +358,29 @@ void Shell_model_base::get_task_caps(L4::Cap<L4::Factory> *factory,
 
 l4_cap_idx_t Shell_model_base::push_initial_caps(l4_cap_idx_t start)
 {
+  l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
+  for (; e && e->flags != ~0UL; ++e) {
+    if (!l4_is_valid_cap(e->cap)) continue;
+    l4re_env_cap_entry_t child_e;
+    child_e.cap   = start;
+    child_e.flags = 0;
+    memcpy(child_e.name, e->name, sizeof(e->name));
+    _stack.push(child_e);
+    start += L4_CAP_OFFSET;
+  }
   return start;
 }
 
-void Shell_model_base::map_initial_caps(L4::Cap<L4::Task>, l4_cap_idx_t)
+void Shell_model_base::map_initial_caps(L4::Cap<L4::Task> task, l4_cap_idx_t start)
 {
+  l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
+  for (; e && e->flags != ~0UL; ++e) {
+    if (!l4_is_valid_cap(e->cap)) continue;
+    task->map(L4Re::This_task,
+              L4::Cap<void>(e->cap).fpage(L4_CAP_FPAGE_RWS),
+              L4::Cap<void>(start).snd_base());
+    start += L4_CAP_OFFSET;
+  }
 }
 
 l4_msgtag_t Shell_model_base::run_thread(L4::Cap<L4::Thread> thread,
