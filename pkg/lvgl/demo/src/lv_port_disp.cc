@@ -67,7 +67,20 @@ void lv_port_disp_init()
     s_height = vi.height;
     s_bpp    = vi.pixel_info.bytes_per_pixel();
 
-    s_fb = s_goos_fb.attach_buffer();
+    {
+        auto buf = s_goos_fb.buffer();
+        l4_size_t buf_sz = (l4_size_t)buf->size();
+        printf("[lv_port] FB DS cap=0x%lx size=%zu\n", buf.cap(), buf_sz);
+        if (buf_sz > 0) {
+            void *addr = nullptr;
+            int r = L4Re::Env::env()->rm()->attach(
+                &addr, buf_sz,
+                L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
+                L4::Ipc::make_cap_rw(buf), 0, L4_PAGESHIFT);
+            printf("[lv_port] rm->attach ret=%d addr=%p\n", r, addr);
+            if (r >= 0) s_fb = addr;
+        }
+    }
     if (!s_fb)
     {
         printf("[lv_port] ERROR: cannot map framebuffer\n");
@@ -91,3 +104,5 @@ void lv_port_disp_init()
                            LV_DISPLAY_RENDER_MODE_PARTIAL);
     lv_display_set_flush_cb(disp, flush_cb);
 }
+
+bool lv_port_disp_is_ready() { return s_fb != nullptr; }

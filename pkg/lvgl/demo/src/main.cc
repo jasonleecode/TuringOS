@@ -28,6 +28,12 @@ int main()
     lv_port_disp_init();
     lv_port_input_init();
 
+    if (!lv_port_disp_is_ready())
+    {
+        printf("[lvgl-demo] No display available — exiting\n");
+        return 1;
+    }
+
     lv_demo_widgets();
 
     printf("[lvgl-demo] UI loop running\n");

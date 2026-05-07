@@ -18,6 +18,7 @@
 #include <l4/vbus/vbus>
 #include <l4/sys/err.h>
 #include <l4/l4virtio/virtqueue>
+#include <l4/sigma0/sigma0.h>
 #include <cstring>
 #include <cstdio>
 
@@ -419,15 +420,35 @@ void lv_port_input_init()
         if (!found_mmio) continue;
 
         // Map MMIO uncached; device registers start at mmio_start
-        l4_addr_t page_off = mmio_start & (L4_PAGESIZE - 1);
-        auto iods = L4::Ipc::make_cap_rw(
-            L4::cap_reinterpret_cast<L4Re::Dataspace>(vbus));
+        l4_addr_t page_off  = mmio_start & (l4_addr_t)(L4_PAGESIZE - 1);
+        l4_addr_t phys_base = mmio_start - page_off;
+        l4_size_t map_size  = (l4_size_t)((mmio_size + page_off + L4_PAGESIZE - 1)
+                                           & ~(l4_size_t)(L4_PAGESIZE - 1));
         l4_addr_t mmio_virt = 0;
-        int r = L4Re::Env::env()->rm()->attach(
-            &mmio_virt, mmio_size + page_off,
-            L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW
-            | L4Re::Rm::F::Cache_uncached,
-            iods, mmio_start - page_off, L4_PAGESHIFT);
+        int r = -1;
+
+        // Try sigma0 identity mapping (phys == virt) to bypass Moe RM
+        // object_pool restriction on non-Moe objects.
+        auto sig0 = L4Re::Env::env()->get_cap<void>("sigma0");
+        if (sig0.is_valid()) {
+            int sr = l4sigma0_map_iomem(sig0.cap(), phys_base, phys_base,
+                                        map_size, 0 /* uncached */);
+            if (sr == 0) {
+                mmio_virt = phys_base;
+                r = 0;
+            }
+        }
+        // Fallback: vbus-as-DS (works with ITAS in-process RM / ned)
+        if (r < 0) {
+            auto iods = L4::Ipc::make_cap_rw(
+                L4::cap_reinterpret_cast<L4Re::Dataspace>(vbus));
+            mmio_virt = 0;
+            r = L4Re::Env::env()->rm()->attach(
+                &mmio_virt, map_size,
+                L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW
+                | L4Re::Rm::F::Cache_uncached,
+                iods, phys_base, L4_PAGESHIFT);
+        }
         if (r < 0)
         {
             printf("[lv_input] Failed to map MMIO 0x%lx (err %d)\n",
