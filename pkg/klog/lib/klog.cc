@@ -3,8 +3,6 @@
 #include <cstring>
 #include <cstdlib>
 #include <cstdarg>
-#include <sys/stat.h>
-#include <sys/types.h>
 #include <time.h>
 #include <pthread.h>
 
@@ -108,10 +106,6 @@ void klog_init(const char *log_path)
     if (log_path)
         snprintf(g_log_path, sizeof(g_log_path), "%s", log_path);
     pthread_mutex_unlock(&g_lock);
-
-    /* 创建日志目录（失败不报错，可能已存在或无 ext4） */
-    mkdir("/ext4/var",     0755);
-    mkdir("/ext4/var/log", 0755);
 
     klog_info(KLOG_KERN, "klog: ring buffer ready (%d slots) → %s",
               KLOG_RING_SIZE, g_log_path);

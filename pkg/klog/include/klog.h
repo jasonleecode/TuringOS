@@ -27,7 +27,7 @@ enum klog_facility {
     KLOG_DISP  = 7,
 };
 
-#define KLOG_FILE_PATH  "/ext4/var/log/syslog.txt"
+#define KLOG_FILE_PATH  "/ext4/syslog.txt"
 #define KLOG_RING_SIZE  256
 
 /*
