@@ -13,7 +13,7 @@
 | [✓] | 多启动项配置（modules.list 已有 native-shell / tcp-server / fb-test / fb-drv / lvgl-demo / uart-test） |
 | [✓] | TCP echo server（lwip + virtio-net，QEMU NAT 转发验证通过） |
 | [✓] | SMP 双核默认（run_qemu_virt.sh -smp 2，smp-test PASSED） |
-| [✓] | klog 日志系统（dmesg 命令，ring buffer，severity 过滤） |
+| [✓] | klog 日志系统（dmesg 命令，ring buffer，severity 过滤） — 升级为系统级 libklog（见下注） |
 | [✓] | uptime 命令（CLOCK_MONOTONIC，天/时/分/秒格式） |
 | [✓] | i.MX6UL（Cortex-A7）平台适配（QEMU mcimx6ul-evk，CONFIG_CPU_VIRT 已禁用） |
 | [✓] | 终端登录（`login:` / `Password:` 提示，密码显示 `*`，默认 root/12345678） |
@@ -98,6 +98,12 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 - **崩溃防护**：加 `lv_port_disp_is_ready()` 检查，display 失败时提前退出，避免 `lv_display_get_default()` 返回 NULL 导致页错误。
 
 详细设计见 [fb-drv-design.md](fb-drv-design.md)。
+
+**注 — libklog 系统级日志（2026-05-07）**：将原 native_shell 内部 `log.cc` 提取为独立库 `pkg/klog`，供所有包使用。特性：
+- ANSI 彩色终端输出（红=ERR+，黄=WARN，暗灰=DEBUG）
+- ext4 追加写入：`/ext4/var/log/syslog.txt`，单调序列号确保每次 flush 只写新条目
+- 无 ext4 时静默降级为仅控制台输出
+- 已接入：native_shell（log.h 改为 shim）、lvgl-demo（lv_port_disp/input/main）、cmd_net、cmd_ping
 
 ### WebAssembly 运行时（wamr）[✓]
 
