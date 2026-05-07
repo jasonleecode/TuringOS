@@ -23,7 +23,7 @@ static inline uint32_t get_ms()
 
 int main()
 {
-    klog_init(NULL);  /* console-only; no ext4 access in this process */
+    klog_init(NULL);
     klog_info(KLOG_DISP, "lvgl-demo: starting");
 
     lv_init();
@@ -39,13 +39,22 @@ int main()
     lv_demo_widgets();
 
     klog_info(KLOG_DISP, "lvgl-demo: UI loop running");
+    klog_flush();   /* write startup log to /ext4/syslog.txt */
 
     uint32_t last_ms = get_ms();
+    uint32_t flush_ms = last_ms;
     while (true)
     {
         uint32_t now_ms = get_ms();
         lv_tick_inc(now_ms - last_ms);
         last_ms = now_ms;
+
+        /* Flush log to disk every 10 s */
+        if (now_ms - flush_ms >= 10000u)
+        {
+            klog_flush();
+            flush_ms = now_ms;
+        }
 
         uint32_t delay = lv_timer_handler();
         l4_sleep(delay > 16 ? 16 : (delay ? delay : 1));
