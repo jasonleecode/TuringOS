@@ -252,11 +252,14 @@ int main(int argc, char const* const* argv)
     rl_attempted_completion_function = shell_completion;
 
     klog_info(KLOG_KERN, "shell ready");
+    klog_flush();
     printf("\nTuringOS 1.0 (ttyS0)\n\n");
     for (;;) {
         if (do_login()) break;
         printf("Too many login failures. Try again.\n\n");
     }
+    klog_info(KLOG_KERN, "shell: login ok");
+    klog_flush();
     printf("\nWelcome, %s!\n", LOGIN_USER);
     printf("Type 'help' for available commands.\n\n");
 

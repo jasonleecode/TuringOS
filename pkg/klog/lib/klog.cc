@@ -109,6 +109,7 @@ void klog_init(const char *log_path)
 
     klog_info(KLOG_KERN, "klog: ring buffer ready (%d slots) → %s",
               KLOG_RING_SIZE, g_log_path);
+    klog_flush();   /* create / open the log file immediately on init */
 }
 
 void klog_write(int level, int facility, const char *fmt, ...)
@@ -136,7 +137,7 @@ void klog_write(int level, int facility, const char *fmt, ...)
     if (g_count < KLOG_RING_SIZE) g_count++;
 
     bool do_print = (level <= g_console_level);
-    bool do_flush = (level <= KLOG_ERR);
+    bool do_flush = (level <= KLOG_WARN);
 
     pthread_mutex_unlock(&g_lock);
 
