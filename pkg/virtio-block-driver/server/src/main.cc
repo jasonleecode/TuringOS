@@ -468,7 +468,16 @@ int main(int argc, char *const *argv)
   Dbg::info().printf("VirtIO block driver starting\n");
 
   Block_device::Errand::set_server_iface(&server);
-  setup_hardware();
+  try
+    {
+      setup_hardware();
+    }
+  catch (L4::Runtime_error const &e)
+    {
+      Err().printf("Hardware setup failed: %s — no block device available\n",
+                   e.str());
+      return 1;
+    }
 
   Dbg::info().printf("Entering server loop\n");
   server.loop();
