@@ -48,6 +48,7 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 | 状态 | 子任务 |
 |------|------|
 | [✓] | VirtIO 块设备驱动（pkg/virtio-block-driver） |
+| [✓] | block driver 崩溃根因修复：l4re 上游同步后 `l4re_env_t::caps` 偏移从 48 变 52，旧 binary 访问错字段（`first_free_utcb`）→ UTCB 越界；重编后消除 |
 | [✓] | ext4fs 服务器挂载 + I/O 自测（lwext4） |
 | [✓] | L4Re Namespace 服务器 — POSIX 只读访问（cat /ext4/file） |
 | [✓] | 写支持 — `echo > /ext4/file`、`cat` 读回（共享 Dataspace + op_close 回写） |
