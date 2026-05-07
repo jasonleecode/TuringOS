@@ -88,9 +88,14 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 | [✓] | fb-drv 第一阶段：用户态 Goos 代理服务器，client 通过 IPC 访问帧缓冲 |
 | [✓] | LVGL v9 图形演示（lvgl-demo，QEMU virtio-gpu，流畅渲染） |
 | [✓] | virtio-input：键盘 + tablet 指针接入 LVGL（keypad + pointer indev） |
-| [✓] | 从 native_shell `run` 命令启动 lvgl-demo（`run lvgl-demo`，自动转发 fb/input cap） |
+| [✓] | 从 native_shell `run` 命令启动 lvgl-demo（`run lvgl-demo`，自动转发 fb/input cap） — 已修复 Moe 外部 RM 兼容性问题（见下注） |
 | 待做 | fb-drv 第二阶段：多客户端 virtual buffer + 合成（轻量窗口管理器基础） |
 | 待做 | fb-drv 第三阶段：RPi4 HDMI 真实硬件路径（BCM2711 mailbox） |
+
+**注 — Moe 外部 RM 兼容性（2026-05-07 修复）**：通过 `run` 命令启动的任务使用 Moe 外部 RM，ned 直接启动的任务使用 ITAS 内部 RM。Moe RM 的 `validate_ds()` 只接受自己 `object_pool` 里的 Dataspace，io-server vbus cap 不在其中，导致 `rm()->attach()` 返回 `-L4_ENOENT`。修复方案：
+- **输入 MMIO**：改用 `l4sigma0_map_iomem()` 恒等映射（phys == virt），绕过 RM；保留 vbus-as-DS 作 ned 路径的 fallback。
+- **帧缓冲**：将 `attach_buffer()`（`L4_SUPERPAGESHIFT`）改为直接 `rm()->attach()` + `L4_PAGESHIFT`，加入调试输出。
+- **崩溃防护**：加 `lv_port_disp_is_ready()` 检查，display 失败时提前退出，避免 `lv_display_get_default()` 返回 NULL 导致页错误。
 
 详细设计见 [fb-drv-design.md](fb-drv-design.md)。
 
@@ -102,7 +107,9 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 ### Shell 任务管理 [✓]
 
 - `&` 后台运算符，`list_tasks` 查看后台任务
-- `run` 命令：从 ROM 动态启动已加载的 L4Re 程序（`run rom/hello`）
+- `run` 命令：从 ROM 动态启动已加载的 L4Re 程序（`run hello` / `run lvgl-demo`）
+- `push_initial_caps` / `map_initial_caps`：将 native_shell 的所有命名 cap（fb、input、sigma0、rtc 等）透传给子任务，使子任务无需 ned 即可访问硬件服务
+- **注（2026-05-07）**：`module hello` 曾在添加 fb-drv 时意外从 native-shell entry 中删除，导致 `run hello` 报 `open_file: 'hello' not found`，已在 modules.list 中补回
 
 ### 传感器 / 外设驱动
 
