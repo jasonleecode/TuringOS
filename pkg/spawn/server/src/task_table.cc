@@ -8,9 +8,8 @@
 
 Task_table::Task_table() : _next_handle(1)
 {
-    memset(_tasks, 0, sizeof(_tasks));
     for (int i = 0; i < MAX; i++)
-        _tasks[i].state = Child_task::FREE;
+        _tasks[i] = Child_task{};
 }
 
 Child_task *Task_table::alloc(const char *name)

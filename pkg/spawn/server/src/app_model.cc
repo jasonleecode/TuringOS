@@ -12,6 +12,7 @@
 #include <l4/sys/task>
 #include <l4/sys/ipc.h>
 #include <l4/re/l4aux.h>
+#include <ext4_file_proto.h>
 #include <cstring>
 #include <cstdio>
 
@@ -91,9 +92,12 @@ void Spawn_model_base::set_args(int argc, const char* const* argv,
 Spawn_model_base::Const_dataspace
 Spawn_model_base::open_file(const char* name)
 {
-  L4Re::Util::Env_ns ens;
+  // Phase 3: ext4 absolute paths like "/ext4/bin/hello"
+  if (strncmp(name, "/ext4/", 6) == 0)
+    return open_from_ext4(name + 6);
 
-  // Phase 1: ROM-only. Try "rom/<name>" then bare "<name>" in Env_ns.
+  // Phase 1: ROM — try "rom/<name>" then bare "<name>" in Env_ns.
+  L4Re::Util::Env_ns ens;
   char rom_path[280];
   if (strncmp(name, "rom/", 4) != 0)
     snprintf(rom_path, sizeof(rom_path), "rom/%s", name);
@@ -112,6 +116,46 @@ Spawn_model_base::open_file(const char* name)
 
   fprintf(stderr, "[spawnd] open_file: '%s' not found\n", name);
   return Const_dataspace();
+}
+
+Spawn_model_base::Const_dataspace
+Spawn_model_base::open_from_ext4(const char *relpath)
+{
+  // Build env namespace query path "ext4/<relpath>".
+  // Env_ns handles multi-component Partly_resolved responses automatically,
+  // traversing the Ext4_namespace tree until it reaches a file object.
+  char qpath[520];
+  snprintf(qpath, sizeof(qpath), "ext4/%s", relpath);
+
+  L4Re::Util::Env_ns ens;
+  L4::Cap<Ext4_file_ops> raw = ens.query<Ext4_file_ops>(qpath);
+  if (!raw.is_valid()) {
+    fprintf(stderr, "[spawnd] open_from_ext4: '%s' not found\n", relpath);
+    return Const_dataspace();
+  }
+  // Take ownership so the cap slot is freed when this scope exits.
+  L4Re::Util::Unique_del_cap<Ext4_file_ops> fops(raw);
+
+  // Allocate a DS cap slot and receive the file dataspace from the server.
+  Const_dataspace ds(L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>());
+  if (!ds.is_valid()) {
+    fprintf(stderr, "[spawnd] open_from_ext4: DS cap alloc failed\n");
+    return Const_dataspace();
+  }
+
+  l4_uint64_t fsize = 0;
+  long r = fops.get()->get_ds(ds.get(), fsize);
+
+  // Read-only load: tell the server to close without flushing.
+  fops.get()->close(0);
+
+  if (r < 0) {
+    fprintf(stderr, "[spawnd] open_from_ext4: get_ds failed (%ld)\n", r);
+    return Const_dataspace();
+  }
+
+  printf("[spawnd] open_from_ext4: '%s' %llu bytes\n", relpath, fsize);
+  return ds;
 }
 
 Spawn_model_base::Dataspace
