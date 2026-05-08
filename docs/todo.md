@@ -41,6 +41,93 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 
 ---
 
+## 架构审视（2026-05-08）
+
+> 以下是对当前系统完整度的分析，作为后续开发路线图的依据。
+
+### 当前架构全景
+
+```
+Fiasco.OC (微内核)
+    └── L4Re (运行时框架)
+         ├── ned (init/loader)          ← 静态配置，无服务监督
+         ├── io (设备总线)
+         ├── ext4fs (文件系统服务)       ← 基本读写，mkdir/unlink 缺失
+         ├── rtc / virtio-block / virtio-net / fb-drv (驱动)
+         ├── native_shell (交互式 shell) ← 无管道、无脚本、无 PATH
+         └── lvgl-demo / wamr / uart-test (应用)
+```
+
+### 六大核心缺口
+
+#### 缺口 1：进程生命周期（最关键）
+
+`run` 命令能 spawn 任务，但没有完整的生命周期管理：
+
+- **无 exit/wait**：子任务退出后 cap 不回收，长期运行耗尽 cap slot
+- **无进程间信号**：无法 `kill <pid>`，只有 native_shell 内部 SIGINT
+- **无孤儿清理**：后台任务崩溃无人感知、无人回收
+- **无 exec 语义**：不能动态加载新程序并替换当前地址空间
+
+这是构建真实应用的最大障碍。参考方向：基于 L4Re 的轻量进程管理器（类 QNX procnto）。
+
+#### 缺口 2：管道与 IPC 通道
+
+Shell 完全不支持 `cmd1 | cmd2`。根本原因：
+
+- L4Re 无 POSIX `pipe()`（注释中已标注）
+- 所有 IPC 都是同步 L4Re Call，没有字节流通道抽象
+- 没有 Unix domain socket
+
+没有管道，Unix 哲学无从谈起。设计方向：基于共享 Dataspace + 读写索引实现环形字节流，封装成 `pipe()` 兼容接口。
+
+#### 缺口 3：文件系统不完整
+
+| 功能 | 状态 | 影响 |
+|------|------|------|
+| mkdir / unlink | ✗ | 无法创建目录结构 |
+| 文件大小上限 | 4 MiB 硬限 | 无法处理大文件 |
+| 并发写安全 | ✗ | 多进程写同一文件会数据损坏 |
+| cap 生命周期 | ✗ | Ext4_file_svr 不释放，长期运行 OOM |
+| tmpfs / ramfs | ✗ | 标准库依赖 /tmp，缺失会导致静默失败 |
+| /proc / /sys | ✗ | 无法查询系统状态 |
+
+**优先级最高**：tmpfs（很多标准库隐式依赖 `/tmp`）和 mkdir/unlink（基本文件操作完整性）。
+
+#### 缺口 4：Shell 功能残缺
+
+| 功能 | 状态 |
+|------|------|
+| `\|` 管道 | ✗ |
+| `<` 输入重定向 | ✗ |
+| `$VAR` 环境变量 | ✗ |
+| `if / while / for` 控制流 | ✗ |
+| PATH 路径搜索 | ✗（命令必须在内置列表） |
+| `&&` `\|\|` 逻辑连接 | ✗ |
+| Tab 补全文件路径 | ✗（只补全命令名） |
+
+当前 shell 更像一个命令分发器，不是真正的 POSIX shell。
+
+#### 缺口 5：日志系统设计缺陷
+
+当前 libklog 是进程内库，存在结构性问题：
+
+- **多进程写竞争**：每个进程独立的 `g_file_seq`，并发 fopen/fclose 无互斥
+- **无日志轮转**：syslog.txt 无限增长，嵌入式环境存储有限
+- **flush 时机不可控**：lvgl-demo 靠 UI loop 计时，精度差
+
+理想架构：独立 `syslogd` 守护进程，其他进程通过 L4Re IPC 发消息，由 syslogd 统一序列化写文件并处理轮转。
+
+#### 缺口 6：安全模型缺失
+
+- 密码硬编码在源码（`root/12345678`）
+- 无用户数据库（无 `/etc/passwd` 等价物）
+- `run` 命令将 native_shell 的**全部** cap（含 sigma0）转发给子任务
+- 无基于 cap 的细粒度权限策略
+- 所有进程等效于 root，无隔离
+
+---
+
 ## P1 — 核心系统服务
 
 ### 文件系统 / VFS
@@ -53,9 +140,11 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 | [✓] | L4Re Namespace 服务器 — POSIX 只读访问（cat /ext4/file） |
 | [✓] | 写支持 — `echo > /ext4/file`、`cat` 读回（共享 Dataspace + op_close 回写） |
 | [✓] | 目录列举 — `ls /ext4` 及子目录递归（`.dirinfo` DS 机制） |
-| 待做 | cap 生命周期管理：`Ext4_file_svr` / 子 namespace 注册后不自动释放，长期运行会耗尽 cap slot |
-| 待做 | 写并发：同一文件多个 op_query 产生多个 svr，末次 op_close 覆盖前面写入 |
 | 待做 | `mkdir` / `unlink` 支持 |
+| 待做 | cap 生命周期管理：`Ext4_file_svr` / 子 namespace 注册后不自动释放，长期运行会耗尽 cap slot |
+| 待做 | 写并发互斥：同一文件多个 op_query 产生多个 svr，末次 op_close 覆盖前面写入 |
+| 待做 | 文件大小突破 4 MiB 限制（FILE_DS_MAX，考虑分段 DS 或流式写入） |
+| 待做 | tmpfs / ramfs（挂载到 /tmp，无需磁盘） |
 | 待做 | 其他块设备（emmc-driver、nvme-driver）挂载 ext4 |
 
 详细设计见 [ext4-implementation-plan.md](ext4-implementation-plan.md)。
@@ -69,6 +158,8 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 | [✓] | UDP 支持验证（udp 命令，echo server port 5001，hostfwd=udp::5556-:5001） |
 | [✓] | DNS 解析（nslookup 命令，lwip_getaddrinfo，DNS 服务器 10.0.2.3） |
 | [✓] | ping 命令（ICMP raw socket，支持 -c 计数，RTT 统计） |
+| 待做 | DHCP 客户端（当前 IP 为 QEMU SLIRP 静态分配） |
+| 待做 | HTTP 客户端（wget / curl 最小实现） |
 
 ### 串口通信
 
@@ -79,6 +170,36 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 ---
 
 ## P2 — 功能扩展
+
+### 进程管理与 IPC
+
+| 状态 | 子任务 |
+|------|------|
+| 待做 | 进程退出/回收：`run` 命令创建的任务退出后自动释放 cap，防止泄漏 |
+| 待做 | `kill` 命令：向后台任务发送终止信号 |
+| 待做 | 管道（pipe）：基于共享 DS + 环形索引实现字节流，支持 `cmd1 \| cmd2` |
+| 待做 | `wait` 命令：等待后台任务结束并获取退出码 |
+
+### Shell 增强
+
+| 状态 | 子任务 |
+|------|------|
+| [✓] | `&` 后台、`>` 重定向、Tab 命令名补全、历史记录 |
+| 待做 | `\|` 管道（依赖上方 pipe IPC） |
+| 待做 | 环境变量（`export VAR=val`、`$VAR` 展开） |
+| 待做 | PATH 路径搜索（从 `/ext4/bin` 等目录查找可执行文件） |
+| 待做 | Tab 补全文件路径 |
+| 待做 | `<` 输入重定向 |
+| 待做 | `if / while / for` 基本控制流（mini shell 脚本） |
+
+### 日志系统演进
+
+| 状态 | 子任务 |
+|------|------|
+| [✓] | libklog：进程内 ring buffer，ANSI 彩色控制台，ext4 追加写入 |
+| 待做 | syslogd 守护进程：统一接收各进程 IPC 日志消息，串行写文件，消除并发竞争 |
+| 待做 | 日志轮转：按大小（如 1 MiB）轮转，保留最近 N 个文件 |
+| 待做 | `dmesg` 命令优化：支持 `-f facility` 过滤、`-l level` 过滤、`-w` follow 模式 |
 
 ### 显示子系统
 
@@ -99,11 +220,12 @@ Fiasco 已知设计缺陷，上游暂无直接补丁。
 
 详细设计见 [fb-drv-design.md](fb-drv-design.md)。
 
-**注 — libklog 系统级日志（2026-05-07）**：将原 native_shell 内部 `log.cc` 提取为独立库 `pkg/klog`，供所有包使用。特性：
+**注 — libklog 系统级日志（2026-05-07~08）**：将原 native_shell 内部 `log.cc` 提取为独立库 `pkg/klog`，供所有包使用。特性：
 - ANSI 彩色终端输出（红=ERR+，黄=WARN，暗灰=DEBUG）
-- ext4 追加写入：`/ext4/var/log/syslog.txt`，单调序列号确保每次 flush 只写新条目
+- ext4 追加写入：`/ext4/syslog.txt`，单调序列号确保每次 flush 只写新条目
 - 无 ext4 时静默降级为仅控制台输出
 - 已接入：native_shell（log.h 改为 shim）、lvgl-demo（lv_port_disp/input/main）、cmd_net、cmd_ping
+- 已修复：fopen("a") 在 Ext4_file_vfs 中 _pos=0 导致覆写问题（补 fseek SEEK_END）
 
 ### WebAssembly 运行时（wamr）[✓]
 
@@ -136,10 +258,25 @@ QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity �
 
 ## P3 — 长期目标
 
+### 服务监督（init 演进）
+
+ned 目前承担 init 角色，但缺少：
+- 服务崩溃自动重启
+- 服务间依赖声明与健康检查
+- 运行时动态添加/删除服务
+
+方向：在 ned 之上构建轻量 supervisor（类 s6 / runit 风格），或直接扩展 ned。
+
 ### POSIX 兼容层
 
 参考 QNX 设计，在 L4Re 之上提供 POSIX 接口（进程、信号、文件描述符）。
 涉及：驱动框架统一、libc 集成、syscall 适配。
+
+### 安全模型
+
+- 用户数据库：实现 `/ext4/etc/passwd`，支持多用户登录
+- cap 权限策略：`run` 命令按需传递 cap 而非全量转发（尤其不应转发 sigma0）
+- 进程隔离：不同权限进程访问不同 cap 集合
 
 ### 终端登录 [✓]
 
@@ -168,3 +305,4 @@ AM335x 平台适配代码已完成（时钟初始化、UART、I2C、RTC、GPIO�
 3. 编译：`make -C build/l4re_virt pkg/<name>`（不要用 `PKGS=` 变量）
 4. `build.sh` 会自动同步 `l4mk/pkg/` 符号链接，无需手动 `ln -s`
 5. 运行镜像：在 `l4mk/conf/modules.list` 添加 entry，用 `E=<entry> elfimage` 打包
+6. **重要**：修改任何包后必须执行 `make -C build/l4re_virt E=<entry> elfimage` 重新打包引导镜像，`pkg/bootstrap` 不会自动检测二进制变化
