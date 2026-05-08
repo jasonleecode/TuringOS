@@ -47,7 +47,10 @@ shell_cmd commands[] = {
     { "list_tasks", "List background tasks",                cmd_list_tasks },
     { "dmesg",      "Show/manage kernel log  [-c] [-l N] [-n N] [--save]", cmd_dmesg },
     /* program execution */
-    { "run",        "Execute a program  <rom/xxx|xxx>",     cmd_run        },
+    { "run",        "Run a program  <rom/xxx|/ext4/...> [&]",   cmd_run  },
+    { "jobs",       "List background jobs",                      cmd_jobs },
+    { "wait",       "Wait for background job  <handle>",         cmd_wait },
+    { "kill",       "Kill background job  <handle>",             cmd_kill },
     /* hardware */
     { "temp",       "Read DS18B20 temperature  [pin]",                 cmd_temp  },
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
@@ -729,6 +732,53 @@ void cmd_list_tasks(int argc, char **argv)
 }
 
 /* ------------------------------------------------------------------ */
+/* Program execution — shared spawnd cap + job table                   */
+/* ------------------------------------------------------------------ */
+
+static L4::Cap<Spawn_svr> g_spawnd;
+
+static L4::Cap<Spawn_svr> spawnd_cap()
+{
+    if (!g_spawnd.is_valid())
+        g_spawnd = L4Re::Env::env()->get_cap<Spawn_svr>("spawnd");
+    return g_spawnd;
+}
+
+static constexpr int MAX_JOBS = 32;
+
+struct job_entry {
+    l4_uint32_t handle;
+    char        name[64];
+    bool        active;
+};
+
+static job_entry g_jobs[MAX_JOBS];
+static int       g_job_count = 0;
+
+static void job_add(l4_uint32_t handle, const char *name)
+{
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (!g_jobs[i].active) {
+            g_jobs[i].handle = handle;
+            snprintf(g_jobs[i].name, sizeof(g_jobs[i].name), "%s", name);
+            g_jobs[i].active = true;
+            if (i >= g_job_count) g_job_count = i + 1;
+            return;
+        }
+    }
+}
+
+static void job_remove(l4_uint32_t handle)
+{
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (g_jobs[i].active && g_jobs[i].handle == handle) {
+            g_jobs[i].active = false;
+            return;
+        }
+    }
+}
+
+/* ------------------------------------------------------------------ */
 /* Program execution commands                                            */
 /* ------------------------------------------------------------------ */
 
@@ -757,15 +807,11 @@ void cmd_run(int argc, char **argv)
         return;
     }
 
-    /* Discover spawnd cap once */
-    static L4::Cap<Spawn_svr> g_spawnd;
-    if (!g_spawnd.is_valid()) {
-        g_spawnd = L4Re::Env::env()->get_cap<Spawn_svr>("spawnd");
-        if (!g_spawnd.is_valid()) {
-            printf("run: spawnd not available (no 'spawnd' cap)\n");
-            klog_warn(KLOG_SHELL, "run: spawnd cap not found");
-            return;
-        }
+    auto spawnd = spawnd_cap();
+    if (!spawnd.is_valid()) {
+        printf("run: spawnd not available (no 'spawnd' cap)\n");
+        klog_warn(KLOG_SHELL, "run: spawnd cap not found");
+        return;
     }
 
     const char *program = argv[1];
@@ -779,7 +825,7 @@ void cmd_run(int argc, char **argv)
     size_t args_len = pack_argv(args_buf, sizeof(args_buf), &argv[1]);
 
     l4_uint32_t flags = background ? SPAWN_BG : SPAWN_WAIT;
-    long ret = g_spawnd->spawn(
+    long ret = spawnd->spawn(
         L4::Ipc::Array<char const>(strlen(program) + 1, program),
         L4::Ipc::Array<char const>(args_len, args_buf),
         flags);
@@ -792,14 +838,75 @@ void cmd_run(int argc, char **argv)
 
     if (background) {
         klog_info(KLOG_SHELL, "run: %s started in background (handle=%ld)", program, ret);
-        printf("[bg] %s started (handle=%ld)\n", program, ret);
-        task_register(program, "background task");
+        printf("[%ld] %s\n", ret, program);
+        job_add((l4_uint32_t)ret, program);
         return;
     }
 
     /* SPAWN_WAIT: ret is exit code */
     klog_info(KLOG_SHELL, "run: %s exited code=%ld", program, ret);
     printf("run: task exited with code: %ld\n", ret);
+}
+
+void cmd_jobs(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    bool any = false;
+    for (int i = 0; i < g_job_count; i++) {
+        if (!g_jobs[i].active) continue;
+        if (!any) {
+            printf("%-6s  %s\n", "HANDLE", "PROGRAM");
+            printf("%-6s  %s\n", "------", "-------");
+            any = true;
+        }
+        printf("%-6u  %s\n", g_jobs[i].handle, g_jobs[i].name);
+    }
+    if (!any)
+        printf("No background jobs.\n");
+}
+
+void cmd_wait(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: wait <handle>\n");
+        return;
+    }
+    auto spawnd = spawnd_cap();
+    if (!spawnd.is_valid()) {
+        printf("wait: spawnd not available\n");
+        return;
+    }
+    l4_uint32_t handle = (l4_uint32_t)atoi(argv[1]);
+    long ret = spawnd->wait(handle, WAIT_BLOCK);
+    if (ret == -L4_ENOENT) {
+        printf("wait: unknown handle %u\n", handle);
+        return;
+    }
+    job_remove(handle);
+    klog_info(KLOG_SHELL, "wait: handle=%u exited code=%ld", handle, ret);
+    printf("[%u] done  exit code: %ld\n", handle, ret);
+}
+
+void cmd_kill(int argc, char **argv)
+{
+    if (argc < 2) {
+        printf("Usage: kill <handle>\n");
+        return;
+    }
+    auto spawnd = spawnd_cap();
+    if (!spawnd.is_valid()) {
+        printf("kill: spawnd not available\n");
+        return;
+    }
+    l4_uint32_t handle = (l4_uint32_t)atoi(argv[1]);
+    long ret = spawnd->kill(handle);
+    if (ret == -L4_ENOENT) {
+        printf("kill: unknown handle %u\n", handle);
+        return;
+    }
+    job_remove(handle);
+    klog_info(KLOG_SHELL, "kill: handle=%u terminated", handle);
+    printf("[%u] killed\n", handle);
 }
 
 /* ------------------------------------------------------------------ */

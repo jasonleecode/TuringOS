@@ -37,6 +37,9 @@ void cmd_uptime(int argc, char **argv);
 
 /* program execution */
 void cmd_run(int argc, char **argv);
+void cmd_jobs(int argc, char **argv);
+void cmd_wait(int argc, char **argv);
+void cmd_kill(int argc, char **argv);
 
 /* hardware */
 void cmd_temp(int argc, char **argv);
