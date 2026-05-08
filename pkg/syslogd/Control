@@ -1,0 +1,2 @@
+provides: syslogd
+requires: stdlibs libstdc++ ext4_client

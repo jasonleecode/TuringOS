@@ -1,2 +1,2 @@
 provides: libklog
-requires: stdlibs libstdc++
+requires: stdlibs libstdc++ l4re

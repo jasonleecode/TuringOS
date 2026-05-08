@@ -1,4 +1,6 @@
 #include <l4/klog/klog.h>
+#include <l4/klog/klog_ipc.h>
+#include <l4/re/env>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -42,6 +44,7 @@ static unsigned long long g_file_seq   = 0;   /* 已写入文件的最大序号 
 static pthread_mutex_t g_lock          = PTHREAD_MUTEX_INITIALIZER;
 
 static char g_log_path[256] = KLOG_FILE_PATH;
+static L4::Cap<Klog_svr> g_syslogd;
 
 /* ------------------------------------------------------------------ */
 /* Helpers                                                             */
@@ -105,10 +108,15 @@ void klog_init(const char *log_path)
     g_file_seq   = 0;
     if (log_path)
         snprintf(g_log_path, sizeof(g_log_path), "%s", log_path);
+    g_syslogd = L4Re::Env::env()->get_cap<Klog_svr>("syslogd");
     pthread_mutex_unlock(&g_lock);
 
-    klog_info(KLOG_KERN, "klog: ring buffer ready (%d slots) → %s",
-              KLOG_RING_SIZE, g_log_path);
+    if (g_syslogd.is_valid())
+        klog_info(KLOG_KERN, "klog: ring buffer ready (%d slots) → syslogd",
+                  KLOG_RING_SIZE);
+    else
+        klog_info(KLOG_KERN, "klog: ring buffer ready (%d slots) → %s",
+                  KLOG_RING_SIZE, g_log_path);
 }
 
 void klog_write(int level, int facility, const char *fmt, ...)
@@ -123,10 +131,12 @@ void klog_write(int level, int facility, const char *fmt, ...)
     if (len > 0 && msg[len - 1] == '\n')
         msg[--len] = '\0';
 
+    unsigned long long ts = uptime_us();
+
     pthread_mutex_lock(&g_lock);
 
     klog_entry *e = &g_ring[g_head];
-    e->ts_us    = uptime_us();
+    e->ts_us    = ts;
     e->seq      = ++g_global_seq;
     e->level    = level;
     e->facility = facility;
@@ -135,23 +145,31 @@ void klog_write(int level, int facility, const char *fmt, ...)
     g_head = (g_head + 1) % KLOG_RING_SIZE;
     if (g_count < KLOG_RING_SIZE) g_count++;
 
-    bool do_print = (level <= g_console_level);
-    bool do_flush = (level <= KLOG_WARN);
+    bool do_print    = (level <= g_console_level);
+    bool use_syslogd = g_syslogd.is_valid();
+    bool do_flush    = (level <= KLOG_WARN) && !use_syslogd;
+    klog_entry snap  = *e;  // snapshot before unlock to avoid race
 
     pthread_mutex_unlock(&g_lock);
 
     if (do_print) {
         char line[320];
-        fmt_entry_console(line, sizeof(line), e);
+        fmt_entry_console(line, sizeof(line), &snap);
         printf("%s\n", line);
     }
 
-    if (do_flush)
+    if (use_syslogd) {
+        g_syslogd->log(ts, (l4_uint8_t)level, (l4_uint8_t)facility,
+                       L4::Ipc::Array<char const>(len, msg));
+    } else if (do_flush) {
         klog_flush();
+    }
 }
 
 void klog_flush(void)
 {
+    if (g_syslogd.is_valid()) return;
+
     pthread_mutex_lock(&g_lock);
 
     /* 快照 ring buffer */
