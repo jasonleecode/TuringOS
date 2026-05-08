@@ -174,6 +174,9 @@ void klog_flush(void)
 
     FILE *f = fopen(g_log_path, "a");
     if (!f) return;
+    /* Ext4_file_vfs::get_status_flags() returns O_RDWR without O_APPEND,
+     * so fopen("a") leaves _pos at 0 instead of end-of-file.  Seek manually. */
+    fseek(f, 0, SEEK_END);
 
     unsigned long long max_seq = file_seq;
     for (int i = 0; i < count; i++) {
