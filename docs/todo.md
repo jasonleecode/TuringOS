@@ -175,10 +175,11 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 
 | 状态 | 子任务 |
 |------|------|
-| 待做 | 进程退出/回收：`run` 命令创建的任务退出后自动释放 cap，防止泄漏 |
-| 待做 | `kill` 命令：向后台任务发送终止信号 |
+| [✓] | spawnd 程序加载服务：独立进程，接受 spawn/wait/kill IPC，从 ROM 加载 ELF 并管理子任务生命周期 |
+| [✓] | `run` 命令接入 spawnd：shell 通过 IPC 调用 spawnd，不再内嵌 libloader |
+| 待做 | spawnd Phase 2：`jobs`/`wait`/`kill` 命令支持（需 handle 持久化跨 IPC 调用） |
+| 待做 | spawnd Phase 3：从 ext4 加载 ELF（`run /ext4/bin/foo`） |
 | 待做 | 管道（pipe）：基于共享 DS + 环形索引实现字节流，支持 `cmd1 \| cmd2` |
-| 待做 | `wait` 命令：等待后台任务结束并获取退出码 |
 
 ### Shell 增强
 
@@ -197,7 +198,7 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | 状态 | 子任务 |
 |------|------|
 | [✓] | libklog：进程内 ring buffer，ANSI 彩色控制台，ext4 追加写入 |
-| 待做 | syslogd 守护进程：统一接收各进程 IPC 日志消息，串行写文件，消除并发竞争 |
+| [✓] | syslogd 守护进程：统一接收各进程 IPC 日志消息，串行写文件，消除并发竞争（`Klog_send_nowait` 零超时 IPC 防死锁） |
 | 待做 | 日志轮转：按大小（如 1 MiB）轮转，保留最近 N 个文件 |
 | 待做 | `dmesg` 命令优化：支持 `-f facility` 过滤、`-l level` 过滤、`-w` follow 模式 |
 

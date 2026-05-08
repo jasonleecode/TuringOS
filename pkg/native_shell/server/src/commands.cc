@@ -22,6 +22,7 @@
 #include "commands.h"
 #include "shell_exec.h"
 #include "log.h"
+#include <spawn_ipc.h>
 
 shell_cmd commands[] = {
     /* general */
@@ -731,48 +732,74 @@ void cmd_list_tasks(int argc, char **argv)
 /* Program execution commands                                            */
 /* ------------------------------------------------------------------ */
 
+/* Pack argv[0..] into a NUL-separated buffer, double-NUL terminated.
+ * Returns total bytes written, including the final extra NUL. */
+static size_t pack_argv(char *buf, size_t bufsz, char *const *argv)
+{
+    size_t pos = 0;
+    for (int i = 0; argv[i] && pos + 2 < bufsz; i++) {
+        size_t len = strlen(argv[i]);
+        if (pos + len + 2 >= bufsz) break;
+        memcpy(buf + pos, argv[i], len + 1);
+        pos += len + 1;
+    }
+    if (pos < bufsz) buf[pos++] = '\0';  /* double-NUL terminator */
+    return pos;
+}
+
 void cmd_run(int argc, char **argv)
 {
     if (argc < 2) {
         printf("Usage: run <program> [args...]\n");
         printf("  run rom/hello         - Run from ROM\n");
         printf("  run hello             - Run from ROM (short form)\n");
-        printf("  run /path/to/prog     - Run from ext4 (future)\n");
+        printf("  run /ext4/prog        - Run from ext4 filesystem\n");
         return;
     }
 
-    const char *program = argv[1];
+    /* Discover spawnd cap once */
+    static L4::Cap<Spawn_svr> g_spawnd;
+    if (!g_spawnd.is_valid()) {
+        g_spawnd = L4Re::Env::env()->get_cap<Spawn_svr>("spawnd");
+        if (!g_spawnd.is_valid()) {
+            printf("run: spawnd not available (no 'spawnd' cap)\n");
+            klog_warn(KLOG_SHELL, "run: spawnd cap not found");
+            return;
+        }
+    }
 
+    const char *program = argv[1];
     bool background = g_run_background;
     g_run_background = false;
 
     klog_info(KLOG_SHELL, "run: starting %s%s", program, background ? " &" : "");
 
-    static Simple_task_manager task_manager;
+    /* Pack argv into IPC format: "prog\0arg1\0arg2\0\0" */
+    char args_buf[1024];
+    size_t args_len = pack_argv(args_buf, sizeof(args_buf), &argv[1]);
 
-    char *const *exec_argv = &argv[1];
-    extern char **environ;
-    char *const *exec_envp = environ;
+    l4_uint32_t flags = background ? SPAWN_BG : SPAWN_WAIT;
+    long ret = g_spawnd->spawn(
+        L4::Ipc::Array<char const>(strlen(program) + 1, program),
+        L4::Ipc::Array<char const>(args_len, args_buf),
+        flags);
 
-    auto *task = task_manager.spawn(program, exec_argv, exec_envp);
-
-    if (!task) {
-        klog_err(KLOG_SHELL, "run: failed to start %s", program);
-        printf("run: failed to start %s\n", program);
+    if (ret < 0) {
+        klog_err(KLOG_SHELL, "run: spawn failed (%ld)", ret);
+        printf("run: failed to start %s (err=%ld)\n", program, ret);
         return;
     }
-
-    klog_info(KLOG_SHELL, "run: spawned %s (task_cap=%lu)", program, task->task_cap);
 
     if (background) {
+        klog_info(KLOG_SHELL, "run: %s started in background (handle=%ld)", program, ret);
+        printf("[bg] %s started (handle=%ld)\n", program, ret);
         task_register(program, "background task");
-        printf("[bg] %s started (task_cap=%lu)\n", program, task->task_cap);
         return;
     }
 
-    int exit_code = task_manager.wait(task);
-    klog_info(KLOG_SHELL, "run: %s exited code=%d", program, exit_code);
-    printf("run: task exited with code: %d\n", exit_code);
+    /* SPAWN_WAIT: ret is exit code */
+    klog_info(KLOG_SHELL, "run: %s exited code=%ld", program, ret);
+    printf("run: task exited with code: %ld\n", ret);
 }
 
 /* ------------------------------------------------------------------ */
