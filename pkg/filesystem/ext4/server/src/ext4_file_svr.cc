@@ -132,5 +132,14 @@ Ext4_file_svr::op_close(Ext4_file_ops::Rights, l4_uint64_t written)
     ext4_fclose(&f);
 
   printf("[ext4svr] op_close: wrote %zu bytes → '%s'\n", wr, _path);
+
+  // Free DS mapping from server's address space on close.
+  // The client still holds its DS cap; the kernel object stays alive.
+  if (_ds_addr) {
+    L4Re::Env::env()->rm()->detach(_ds_addr, nullptr);
+    _ds_addr = 0;
+  }
+  _ok = false;
+
   return L4_EOK;
 }

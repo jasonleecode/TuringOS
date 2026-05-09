@@ -60,8 +60,8 @@ make_dirinfo(const char *dir_path, L4::Ipc::Snd_fpage &snd_cap)
       if (n == 0) continue;
       if (n == 1 && de->name[0] == '.') continue;
       if (n == 2 && de->name[0] == '.' && de->name[1] == '.') continue;
-      // "<digits>:<name>\n" — at most 3 digits (name_length ≤ 255)
-      buf_needed += 5 + n;
+      // "<digits>:<name><type_tag>\n" — at most 3 digits + colon + name + tag + newline
+      buf_needed += 6 + n;
     }
   ext4_dir_close(&dir);
 
@@ -106,9 +106,12 @@ make_dirinfo(const char *dir_path, L4::Ipc::Snd_fpage &snd_cap)
           if (hdr < 0 || (size_t)hdr >= remain) break;
           p += hdr;
 
-          if ((size_t)(end - p) < n + 1) break;
+          // type tag: 'd' for directory, 'f' for regular file
+          char type_tag = (de->inode_type == EXT4_DE_DIR) ? 'd' : 'f';
+          if ((size_t)(end - p) < n + 2) break;
           memcpy(p, de->name, n);
           p += n;
+          *p++ = type_tag;
           *p++ = '\n';
         }
       ext4_dir_close(&dir);

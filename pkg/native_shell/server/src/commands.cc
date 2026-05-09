@@ -172,13 +172,10 @@ void cmd_ls(int argc, char **argv)
              (entry->d_name[1] == '.' && entry->d_name[2] == '\0')))
             continue;
 
-        char full[4096];
-        struct stat st;
-        snprintf(full, sizeof(full), "%s/%s", path, entry->d_name);
-        if (stat(full, &st) == 0 && S_ISDIR(st.st_mode))
-            printf("%s/\n", entry->d_name);
-        else
-            printf("%s\n", entry->d_name);
+        /* Use d_type set by ext4 dirinfo type tag; avoid stat() which would
+         * block indefinitely on non-VFS caps (sigma0, factory, etc.). */
+        bool is_dir = (entry->d_type == DT_DIR);
+        printf("%s%s\n", entry->d_name, is_dir ? "/" : "");
     }
     closedir(dir);
 }
