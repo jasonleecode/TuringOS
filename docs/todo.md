@@ -177,8 +177,8 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 |------|------|
 | [✓] | spawnd 程序加载服务：独立进程，接受 spawn/wait/kill IPC，从 ROM 加载 ELF 并管理子任务生命周期 |
 | [✓] | `run` 命令接入 spawnd：shell 通过 IPC 调用 spawnd，不再内嵌 libloader |
-| 待做 | spawnd Phase 2：`jobs`/`wait`/`kill` 命令支持（需 handle 持久化跨 IPC 调用） |
-| 待做 | spawnd Phase 3：从 ext4 加载 ELF（`run /ext4/bin/foo`） |
+| [✓] | spawnd Phase 2：`jobs`/`wait`/`kill` 命令支持（g_jobs 表，handle 持久化跨 IPC 调用） |
+| [✓] | spawnd Phase 3：从 ext4 加载 ELF（`run /ext4/bin/foo`，open_from_ext4 via Env_ns） |
 | 待做 | 管道（pipe）：基于共享 DS + 环形索引实现字节流，支持 `cmd1 \| cmd2` |
 
 ### Shell 增强
@@ -307,3 +307,26 @@ AM335x 平台适配代码已完成（时钟初始化、UART、I2C、RTC、GPIO�
 4. `build.sh` 会自动同步 `l4mk/pkg/` 符号链接，无需手动 `ln -s`
 5. 运行镜像：在 `l4mk/conf/modules.list` 添加 entry，用 `E=<entry> elfimage` 打包
 6. **重要**：修改任何包后必须执行 `make -C build/l4re_virt E=<entry> elfimage` 重新打包引导镜像，`pkg/bootstrap` 不会自动检测二进制变化
+
+---
+
+## 待优化：构建系统增量编译可靠性
+
+**问题**：`pkg/` 下的包有两套构建输出目录，`make -C build/l4re_virt pkg/<name>` 只触发
+`build/l4re_virt/pkg/<name>/`，不触发 `build/l4re_virt/ext-pkg/.../<name>/`。
+后者才是实际打入镜像的二进制。修改头文件后，`make` 误认为 binary 已是最新，改动不生效。
+
+**根因**：L4Re make 系统将 `l4mk/pkg/` 下的符号链接包（指向 `TuringOS/pkg/`）视为
+"external package"，产出放入 `ext-pkg/<绝对路径>/` 而不是 `pkg/`。直接 `make pkg/<name>`
+只构建 `pkg/` 目录（stale/older build），不构建 `ext-pkg/`。
+
+**临时 workaround**（已知有效）：
+```bash
+# 直接在 ext-pkg 的 OBJ 目录里 make
+OBJ=$(find build/l4re_virt/ext-pkg -path "*/<name>/server/src/OBJ-*" -type d)
+make -C "$OBJ"
+# 然后 bootstrap
+./build.sh --board virt bootstrap
+```
+
+**待做**：在 `build.sh` 里增加 `--pkg <name>` 选项，自动找到正确的 `ext-pkg` OBJ 目录并编译，替代手动 find。
