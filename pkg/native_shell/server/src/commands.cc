@@ -48,7 +48,6 @@ shell_cmd commands[] = {
     { "dmesg",      "Show/manage kernel log  [-c] [-l N] [-n N] [--save]", cmd_dmesg },
     /* program execution */
     { "run",        "Run a program  <rom/xxx|/ext4/...> [&]",   cmd_run  },
-    { "jobs",       "List background jobs",                      cmd_jobs },
     { "wait",       "Wait for background job  <handle>",         cmd_wait },
     { "kill",       "Kill background job  <handle>",             cmd_kill },
     /* hardware */
@@ -669,9 +668,10 @@ void cmd_radio(int argc, char **argv)
 static constexpr int MAX_TASKS = 16;
 
 struct task_entry {
-    char name[32];
-    char desc[64];
-    bool active;
+    char        name[64];
+    char        desc[64];
+    l4_uint32_t handle;  // 0 = internal task, non-zero = spawnd process handle
+    bool        active;
 };
 
 static task_entry   g_tasks[MAX_TASKS];
@@ -682,7 +682,8 @@ void task_register(const char *name, const char *desc)
 {
     pthread_mutex_lock(&g_task_mtx);
     for (int i = 0; i < g_task_count; i++) {
-        if (g_tasks[i].active && strcmp(g_tasks[i].name, name) == 0) {
+        if (g_tasks[i].active && g_tasks[i].handle == 0
+            && strcmp(g_tasks[i].name, name) == 0) {
             pthread_mutex_unlock(&g_task_mtx);
             return;
         }
@@ -690,6 +691,7 @@ void task_register(const char *name, const char *desc)
     if (g_task_count < MAX_TASKS) {
         snprintf(g_tasks[g_task_count].name, sizeof(g_tasks[0].name), "%s", name);
         snprintf(g_tasks[g_task_count].desc, sizeof(g_tasks[0].desc), "%s", desc);
+        g_tasks[g_task_count].handle = 0;
         g_tasks[g_task_count].active = true;
         g_task_count++;
     }
@@ -700,7 +702,33 @@ void task_unregister(const char *name)
 {
     pthread_mutex_lock(&g_task_mtx);
     for (int i = 0; i < g_task_count; i++) {
-        if (g_tasks[i].active && strcmp(g_tasks[i].name, name) == 0) {
+        if (g_tasks[i].active && g_tasks[i].handle == 0
+            && strcmp(g_tasks[i].name, name) == 0) {
+            g_tasks[i].active = false;
+            break;
+        }
+    }
+    pthread_mutex_unlock(&g_task_mtx);
+}
+
+void task_register_proc(l4_uint32_t handle, const char *name)
+{
+    pthread_mutex_lock(&g_task_mtx);
+    if (g_task_count < MAX_TASKS) {
+        snprintf(g_tasks[g_task_count].name, sizeof(g_tasks[0].name), "%s", name);
+        g_tasks[g_task_count].desc[0] = '\0';
+        g_tasks[g_task_count].handle  = handle;
+        g_tasks[g_task_count].active  = true;
+        g_task_count++;
+    }
+    pthread_mutex_unlock(&g_task_mtx);
+}
+
+void task_unregister_proc(l4_uint32_t handle)
+{
+    pthread_mutex_lock(&g_task_mtx);
+    for (int i = 0; i < g_task_count; i++) {
+        if (g_tasks[i].active && g_tasks[i].handle == handle) {
             g_tasks[i].active = false;
             break;
         }
@@ -714,13 +742,19 @@ void cmd_list_tasks(int argc, char **argv)
     pthread_mutex_lock(&g_task_mtx);
     bool any = false;
     for (int i = 0; i < g_task_count; i++) {
-        if (g_tasks[i].active) {
-            if (!any) {
-                printf("%-16s  %s\n", "NAME", "DESCRIPTION");
-                printf("%-16s  %s\n", "----", "-----------");
-                any = true;
-            }
-            printf("%-16s  %s\n", g_tasks[i].name, g_tasks[i].desc);
+        if (!g_tasks[i].active) continue;
+        if (!any) {
+            printf("%-8s  %s\n", "HANDLE", "NAME");
+            printf("%-8s  %s\n", "------", "----");
+            any = true;
+        }
+        if (g_tasks[i].handle) {
+            printf("%-8u  %s\n", g_tasks[i].handle, g_tasks[i].name);
+        } else {
+            if (g_tasks[i].desc[0])
+                printf("%-8s  %s (%s)\n", "-", g_tasks[i].name, g_tasks[i].desc);
+            else
+                printf("%-8s  %s\n", "-", g_tasks[i].name);
         }
     }
     if (!any)
@@ -741,39 +775,6 @@ static L4::Cap<Spawn_svr> spawnd_cap()
     return g_spawnd;
 }
 
-static constexpr int MAX_JOBS = 32;
-
-struct job_entry {
-    l4_uint32_t handle;
-    char        name[64];
-    bool        active;
-};
-
-static job_entry g_jobs[MAX_JOBS];
-static int       g_job_count = 0;
-
-static void job_add(l4_uint32_t handle, const char *name)
-{
-    for (int i = 0; i < MAX_JOBS; i++) {
-        if (!g_jobs[i].active) {
-            g_jobs[i].handle = handle;
-            snprintf(g_jobs[i].name, sizeof(g_jobs[i].name), "%s", name);
-            g_jobs[i].active = true;
-            if (i >= g_job_count) g_job_count = i + 1;
-            return;
-        }
-    }
-}
-
-static void job_remove(l4_uint32_t handle)
-{
-    for (int i = 0; i < MAX_JOBS; i++) {
-        if (g_jobs[i].active && g_jobs[i].handle == handle) {
-            g_jobs[i].active = false;
-            return;
-        }
-    }
-}
 
 /* ------------------------------------------------------------------ */
 /* Program execution commands                                            */
@@ -836,30 +837,13 @@ void cmd_run(int argc, char **argv)
     if (background) {
         klog_info(KLOG_SHELL, "run: %s started in background (handle=%ld)", program, ret);
         printf("[%ld] %s\n", ret, program);
-        job_add((l4_uint32_t)ret, program);
+        task_register_proc((l4_uint32_t)ret, program);
         return;
     }
 
     /* SPAWN_WAIT: ret is exit code */
     klog_info(KLOG_SHELL, "run: %s exited code=%ld", program, ret);
     printf("run: task exited with code: %ld\n", ret);
-}
-
-void cmd_jobs(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-    bool any = false;
-    for (int i = 0; i < g_job_count; i++) {
-        if (!g_jobs[i].active) continue;
-        if (!any) {
-            printf("%-6s  %s\n", "HANDLE", "PROGRAM");
-            printf("%-6s  %s\n", "------", "-------");
-            any = true;
-        }
-        printf("%-6u  %s\n", g_jobs[i].handle, g_jobs[i].name);
-    }
-    if (!any)
-        printf("No background jobs.\n");
 }
 
 void cmd_wait(int argc, char **argv)
@@ -879,7 +863,7 @@ void cmd_wait(int argc, char **argv)
         printf("wait: unknown handle %u\n", handle);
         return;
     }
-    job_remove(handle);
+    task_unregister_proc(handle);
     klog_info(KLOG_SHELL, "wait: handle=%u exited code=%ld", handle, ret);
     printf("[%u] done  exit code: %ld\n", handle, ret);
 }
@@ -901,7 +885,7 @@ void cmd_kill(int argc, char **argv)
         printf("kill: unknown handle %u\n", handle);
         return;
     }
-    job_remove(handle);
+    task_unregister_proc(handle);
     klog_info(KLOG_SHELL, "kill: handle=%u terminated", handle);
     printf("[%u] killed\n", handle);
 }

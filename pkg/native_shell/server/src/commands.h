@@ -1,6 +1,7 @@
 #pragma once
 
 #include <csignal>
+#include <l4/sys/types.h>
 
 typedef void (*cmd_func_t)(int argc, char **argv);
 
@@ -37,7 +38,6 @@ void cmd_uptime(int argc, char **argv);
 
 /* program execution */
 void cmd_run(int argc, char **argv);
-void cmd_jobs(int argc, char **argv);
 void cmd_wait(int argc, char **argv);
 void cmd_kill(int argc, char **argv);
 
@@ -59,8 +59,10 @@ void cmd_list_tasks(int argc, char **argv);
 void cmd_dmesg(int argc, char **argv);
 
 /* Background task registry */
-void task_register(const char *name, const char *desc);
+void task_register(const char *name, const char *desc);      // internal threads
 void task_unregister(const char *name);
+void task_register_proc(l4_uint32_t handle, const char *name); // spawnd processes
+void task_unregister_proc(l4_uint32_t handle);
 
 /* Ctrl+C interrupt flag — set by main's SIGINT handler or stdin polling */
 extern volatile sig_atomic_t g_shell_interrupt;
