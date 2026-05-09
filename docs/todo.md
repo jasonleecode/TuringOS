@@ -62,14 +62,14 @@ Fiasco.OC (微内核)
 
 #### 缺口 1：进程生命周期（最关键）
 
-`run` 命令能 spawn 任务，但没有完整的生命周期管理：
+`run` 命令能 spawn 任务，生命周期管理已部分完成：
 
-- **无 exit/wait**：子任务退出后 cap 不回收，长期运行耗尽 cap slot
-- **无进程间信号**：无法 `kill <pid>`，只有 native_shell 内部 SIGINT
-- **无孤儿清理**：后台任务崩溃无人感知、无人回收
+- [✓] **exit/wait**：`wait <handle>` 阻塞直到子任务退出，`_table.free()` 通过 `Unique_del_cap` RAII 销毁 task/thread/rm/gate 全部内核对象，无 cap 泄漏
+- [✓] **kill**：`kill <handle>` 强制销毁子任务所有内核对象并回收 cap slot
+- **孤儿清理**：`do_wait` 阻塞在 `parent_gate` 等子进程主动发消息；若子进程崩溃（未调 `_exit`）则 wait 永久阻塞，资源不回收——需要监控线程或 IRQ 通知机制
 - **无 exec 语义**：不能动态加载新程序并替换当前地址空间
 
-这是构建真实应用的最大障碍。参考方向：基于 L4Re 的轻量进程管理器（类 QNX procnto）。
+参考方向：孤儿清理可用 Fiasco 的 thread-fault 通知或专用 reaper 线程；exec 语义需在 spawnd 内实现地址空间替换。
 
 #### 缺口 2：管道与 IPC 通道
 
