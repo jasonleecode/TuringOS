@@ -70,8 +70,22 @@ Ext4_file_svr::Ext4_file_svr(const char *path)
       if (ext4_fopen(&f, _path, "rb") == EOK)
         {
           size_t rd = 0;
-          ext4_fread(&f, reinterpret_cast<void *>(_ds_addr), to_read, &rd);
+          int re = ext4_fread(&f, reinterpret_cast<void *>(_ds_addr), to_read, &rd);
           ext4_fclose(&f);
+          if (re != EOK || rd != to_read)
+            {
+              printf("[ext4svr] fread '%s' failed: r=%d rd=%zu want=%lu\n",
+                     _path, re, rd, to_read);
+              return;
+            }
+          const unsigned char *p = reinterpret_cast<unsigned char *>(_ds_addr);
+          printf("[ext4svr] loaded '%s' %zu bytes [%02x %02x %02x %02x]\n",
+                 _path, rd, p[0], p[1], p[2], p[3]);
+        }
+      else
+        {
+          printf("[ext4svr] fopen '%s' for read failed\n", _path);
+          return;
         }
     }
 

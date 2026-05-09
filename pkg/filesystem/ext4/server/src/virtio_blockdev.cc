@@ -52,51 +52,67 @@ static int vio_close(struct ext4_blockdev * /*bdev*/)
 static int vio_bread(struct ext4_blockdev * /*bdev*/, void *buf,
                      uint64_t blk_id, uint32_t blk_cnt)
 {
-    l4_size_t bytes = (l4_size_t)blk_cnt * 512;
-    if (bytes > IO_SIZE)
-        return EIO;
+    static const uint32_t BATCH = IO_SIZE / 512;  // max sectors per request
+    char *dst = reinterpret_cast<char *>(buf);
 
-    auto h = s_dev.start_request(blk_id, L4VIRTIO_BLOCK_T_IN, nullptr);
-    if (!h.valid())
-        return EAGAIN;
-
-    if (s_dev.add_block(h, s_iodev_addr, (l4_uint32_t)bytes) < 0)
+    while (blk_cnt > 0)
     {
-        s_dev.free_request(h);
-        return EIO;
+        uint32_t  n     = (blk_cnt > BATCH) ? BATCH : blk_cnt;
+        l4_size_t bytes = (l4_size_t)n * 512;
+
+        auto h = s_dev.start_request(blk_id, L4VIRTIO_BLOCK_T_IN, nullptr);
+        if (!h.valid())
+            return EAGAIN;
+
+        if (s_dev.add_block(h, s_iodev_addr, (l4_uint32_t)bytes) < 0)
+        {
+            s_dev.free_request(h);
+            return EIO;
+        }
+
+        int r = s_dev.process_request(h);
+        if (r < 0)
+            return EIO;
+
+        memcpy(dst, s_iobuf, bytes);
+        dst    += bytes;
+        blk_id += n;
+        blk_cnt -= n;
     }
-
-    int r = s_dev.process_request(h);
-    if (r < 0)
-        return EIO;
-
-    memcpy(buf, s_iobuf, bytes);
     return EOK;
 }
 
 static int vio_bwrite(struct ext4_blockdev * /*bdev*/, const void *buf,
                       uint64_t blk_id, uint32_t blk_cnt)
 {
-    l4_size_t bytes = (l4_size_t)blk_cnt * 512;
-    if (bytes > IO_SIZE)
-        return EIO;
+    static const uint32_t BATCH = IO_SIZE / 512;
+    const char *src = reinterpret_cast<const char *>(buf);
 
-    memcpy(s_iobuf, buf, bytes);
-
-    auto h = s_dev.start_request(blk_id, L4VIRTIO_BLOCK_T_OUT, nullptr);
-    if (!h.valid())
-        return EAGAIN;
-
-    if (s_dev.add_block(h, s_iodev_addr, (l4_uint32_t)bytes) < 0)
+    while (blk_cnt > 0)
     {
-        s_dev.free_request(h);
-        return EIO;
+        uint32_t  n     = (blk_cnt > BATCH) ? BATCH : blk_cnt;
+        l4_size_t bytes = (l4_size_t)n * 512;
+
+        memcpy(s_iobuf, src, bytes);
+
+        auto h = s_dev.start_request(blk_id, L4VIRTIO_BLOCK_T_OUT, nullptr);
+        if (!h.valid())
+            return EAGAIN;
+
+        if (s_dev.add_block(h, s_iodev_addr, (l4_uint32_t)bytes) < 0)
+        {
+            s_dev.free_request(h);
+            return EIO;
+        }
+
+        int r = s_dev.process_request(h);
+        if (r < 0)
+            return EIO;
+
+        src    += bytes;
+        blk_id += n;
+        blk_cnt -= n;
     }
-
-    int r = s_dev.process_request(h);
-    if (r < 0)
-        return EIO;
-
     return EOK;
 }
 

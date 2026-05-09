@@ -164,8 +164,8 @@ public:
   l4_uint64_t capacity() const override { return _capacity; }
   l4_size_t sector_size() const override { return 512; }
   l4_size_t max_size() const override
-  { return (Queue_size - 2) * 512; }  // max per single scatter segment
-  unsigned max_segments() const override { return Queue_size - 2; }
+  { return 128 * 512; }  // 64 KiB — must match IO_SIZE in virtio_blockdev.cc
+  unsigned max_segments() const override { return 1; }
 
   void reset() override;
 

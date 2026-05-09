@@ -145,9 +145,9 @@ Spawn_model_base::open_from_ext4(const char *relpath)
 
   l4_uint64_t fsize = 0;
   long r = fops.get()->get_ds(ds.get(), fsize);
-
-  // Read-only load: tell the server to close without flushing.
-  fops.get()->close(0);
+  // Do NOT call close(0) here — close(written=0) truncates the file on disk.
+  // The Ext4_file_svr object leaks in the server registry (pre-existing issue),
+  // but the file content is preserved for ELF loading.
 
   if (r < 0) {
     fprintf(stderr, "[spawnd] open_from_ext4: get_ds failed (%ld)\n", r);
