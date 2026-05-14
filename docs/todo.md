@@ -275,8 +275,9 @@ QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity �
 | [✓] | min / avg / max（per-thread + 汇总） |
 | [✓] | 固定 100 桶直方图（µs 分辨率） |
 | [✓] | 多线程（pthread，最多 8 个） |
-| [✓] | 可配置 interval / loops / threads / priority / breakmax |
+| [✓] | 参数解析（-i / -l / -t / -p / -b），但硬编码在 cyclictest.cfg，改参数须重新打包 bootstrap |
 | [✓] | QEMU 双核 8 线程验证通过（ALL: min=26 avg=985 max=5568 µs） |
+| 待做 | 运行时可配置：从 native_shell `run cyclictest -t 4 -i 500` 直接改参，无需重新构建镜像 |
 | 待做 | 纳秒精度（`l4_kip_clock_ns()` 已可用，直接替换） |
 | 待做 | CPU 亲和性（`-a` 绑核，消除过度订阅干扰） |
 | 待做 | 百分位统计（p99 / p99.9，比 max 更有工程意义） |
