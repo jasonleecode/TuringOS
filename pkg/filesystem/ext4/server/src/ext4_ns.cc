@@ -124,12 +124,6 @@ make_dirinfo(const char *dir_path, L4::Ipc::Snd_fpage &snd_cap)
   // The server's Unique_cap destructor will free the local cap slot, but the
   // Dataspace kernel object stays alive as long as the client holds its copy.
   snd_cap = L4::Ipc::Snd_fpage(L4::Cap<void>(ds.get().cap()), L4_CAP_FPAGE_RW);
-
-  // Prevent Unique_cap from freeing the cap slot — we want the kernel object
-  // to remain accessible via the server's cap until IPC returns and the cap
-  // is mapped into the client.  Actually Unique_cap only frees the *slot*, not
-  // the kernel object (the client holds a reference), so it is safe to let the
-  // destructor run.  We explicitly release() to be clear about ownership.
   ds.release();
 
   return L4_EOK;
