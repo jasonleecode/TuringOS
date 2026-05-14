@@ -128,6 +128,15 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 
 ---
 
+## 已知问题（仍需要长期测试复现）
+
+| 优先级 | 问题 | 现象 | 怀疑点 |
+|--------|------|------|------|
+| P0 | **任务调度概率崩溃** | SMP=2 下偶发 `context.cpp:758: !schedule_in_progress` 断言，CPU 进入 JDB 死循环 | `Context::schedule()` 在 `preemption_point()`（sti→cli 窗口）开中断时，硬件 IRQ 触发的调度路径（`switch_to_locked` / `Switch_lock::help`）直接调 `schedule()` 而非 `schedule_if()`，重入断言；已初步修复两处调用点，但其他路径可能仍存在同类问题 |
+| P1 | **cd 命令概率卡死** | 输入 `cd <路径>` 或 Tab 补全后终端无响应 | VFS 层 `Env_dir::check_type` / `cap_to_vfs_object` 对 initial_caps（sigma0 等）发 Meta IPC；sigma0 接收消息但不回复，receive 侧以 `L4_IPC_TIMEOUT_NEVER` 等待，永久阻塞；已改用零发送超时，但 sigma0 恰好处于 receive-wait 状态时仍可能挂起（receive 侧尚未加有限超时） |
+
+---
+
 ## P1 — 核心系统服务
 
 ### 文件系统 / VFS
