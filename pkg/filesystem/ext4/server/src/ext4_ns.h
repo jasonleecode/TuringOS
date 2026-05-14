@@ -22,11 +22,17 @@
 #include "../../include/ext4_file_proto.h"
 
 // Combined IPC interface: L4Re::Namespace (query/ls) + Ext4_dir_ops (mkdir/unlink).
+//
+// PROTO=L4RE_PROTO_NAMESPACE so that L4::Meta::interface(0) advertises the
+// Namespace protocol.  Without this, cap_to_vfs_object() in ns_fs_impl.h gets
+// proto=PROTO_ANY=0, finds no VFS file factory, and returns -EPROTO, which
+// breaks chdir() into the ext4 mount point.
 struct Ext4_ns_iface
-: L4::Kobject_2t<Ext4_ns_iface, L4Re::Namespace, Ext4_dir_ops>
+: L4::Kobject_2t<Ext4_ns_iface, L4Re::Namespace, Ext4_dir_ops, L4RE_PROTO_NAMESPACE>
 {
-  // Explicit Rpcs resolves the ambiguity from Iface<PROTO_ANY=0, Ext4_ns_iface>
-  // that Kobject_2t inserts into the dispatch list.
+  // Explicit Rpcs for the Iface<L4RE_PROTO_NAMESPACE, Ext4_ns_iface> entry.
+  // Namespace opcodes come first so opcode 0 routes to op_query, not op_ext_mkdir.
+  // Ext4_dir_ops messages (label=0x5801) never reach this entry.
   using Rpcs = L4::Typeid::Rpcs<
     L4Re::Namespace::query_t,
     L4Re::Namespace::register_obj_t,
