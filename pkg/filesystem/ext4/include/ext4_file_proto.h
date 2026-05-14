@@ -40,3 +40,16 @@ struct Ext4_file_ops
 
   typedef L4::Typeid::Rpcs<get_ds_t, close_t> Rpcs;
 };
+
+// Directory-mutation protocol on the root Ext4_namespace cap.
+// Operations take absolute ext4 paths (e.g. "/foo/bar").
+struct Ext4_dir_ops
+: L4::Kobject_t<Ext4_dir_ops, L4::Kobject, 0x5801>
+{
+  L4_INLINE_RPC(long, ext_mkdir,
+    (L4::Ipc::Array<char const, unsigned long> path));
+  L4_INLINE_RPC(long, ext_unlink,
+    (L4::Ipc::Array<char const, unsigned long> path));
+
+  typedef L4::Typeid::Rpcs<ext_mkdir_t, ext_unlink_t> Rpcs;
+};

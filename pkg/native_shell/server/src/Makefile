@@ -9,7 +9,8 @@ REQUIRES_LIBS	= readline rtc rtc_libc_be ds18b20 tef6686hn \
 		  lwip libc_be_socket_lwip libio-vbus libstdc++ l4util libsigma0 \
 		  devfs libloader ext4_client libklog
 
-PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include
+PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include \
+                   $(SRC_DIR)/../../../filesystem/ext4/include
 
 # Force linker to pull in the ext4_client TU that registers the File_factory.
 LDFLAGS += -u ext4_client_module_init

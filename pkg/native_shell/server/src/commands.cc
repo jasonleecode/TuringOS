@@ -12,6 +12,7 @@
 #include <l4/re/env>
 #include <l4/re/util/cap_alloc>
 #include <l4/sys/factory>
+#include <ext4_file_proto.h>
 #include <l4/rtc/rtc.h>
 #include <l4/util/util.h>
 #include <l4/vbus/vbus>
@@ -199,15 +200,55 @@ void cmd_cat(int argc, char **argv)
     }
 }
 
+// Convert a POSIX path (absolute or cwd-relative) to an absolute ext4 path.
+// Ext4 VFS prefix is "/ext4".  Returns false if not on ext4.
+static bool posix_to_ext4(const char *posix, char *out, size_t outsz)
+{
+    char abs[1024];
+    if (posix[0] == '/') {
+        strncpy(abs, posix, sizeof(abs) - 1);
+        abs[sizeof(abs) - 1] = '\0';
+    } else {
+        char cwd[768];
+        if (!getcwd(cwd, sizeof(cwd))) return false;
+        snprintf(abs, sizeof(abs), "%s/%s", cwd, posix);
+    }
+    if (strncmp(abs, "/ext4", 5) != 0) return false;
+    const char *rest = abs + 5;
+    if (*rest == '\0') { snprintf(out, outsz, "/"); return true; }
+    if (*rest != '/')  return false;
+    snprintf(out, outsz, "%s", rest);
+    return true;
+}
+
+static L4::Cap<Ext4_dir_ops> ext4_dir_cap()
+{
+    return L4Re::Env::env()->get_cap<Ext4_dir_ops>("ext4");
+}
+
 void cmd_mkdir(int argc, char **argv)
 {
     if (argc < 2) {
         printf("Usage: mkdir <dir>\n");
         return;
     }
+    auto cap = ext4_dir_cap();
+    if (!cap.is_valid()) {
+        printf("mkdir: no ext4 filesystem\n");
+        return;
+    }
     for (int i = 1; i < argc; i++) {
-        if (mkdir(argv[i], 0755) != 0)
-            printf("mkdir: %s: %s\n", argv[i], strerror(errno));
+        char ext4p[512];
+        if (!posix_to_ext4(argv[i], ext4p, sizeof(ext4p))) {
+            printf("mkdir: %s: not on ext4\n", argv[i]);
+            continue;
+        }
+        long r = cap->ext_mkdir(
+            L4::Ipc::Array<char const, unsigned long>(strlen(ext4p), ext4p));
+        if (r == -L4_EEXIST)
+            printf("mkdir: %s: File exists\n", argv[i]);
+        else if (r < 0)
+            printf("mkdir: %s: failed (%ld)\n", argv[i], r);
     }
 }
 
@@ -217,9 +258,21 @@ void cmd_rm(int argc, char **argv)
         printf("Usage: rm <file>\n");
         return;
     }
+    auto cap = ext4_dir_cap();
+    if (!cap.is_valid()) {
+        printf("rm: no ext4 filesystem\n");
+        return;
+    }
     for (int i = 1; i < argc; i++) {
-        if (remove(argv[i]) != 0)
-            printf("rm: %s: %s\n", argv[i], strerror(errno));
+        char ext4p[512];
+        if (!posix_to_ext4(argv[i], ext4p, sizeof(ext4p))) {
+            printf("rm: %s: not on ext4\n", argv[i]);
+            continue;
+        }
+        long r = cap->ext_unlink(
+            L4::Ipc::Array<char const, unsigned long>(strlen(ext4p), ext4p));
+        if (r < 0)
+            printf("rm: %s: No such file or directory\n", argv[i]);
     }
 }
 

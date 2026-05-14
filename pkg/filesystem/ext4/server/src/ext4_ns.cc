@@ -136,6 +136,74 @@ make_dirinfo(const char *dir_path, L4::Ipc::Snd_fpage &snd_cap)
 }
 
 // ---------------------------------------------------------------------------
+// Path helper
+// ---------------------------------------------------------------------------
+
+void Ext4_namespace::build_path(char *out, size_t outsz,
+                                 const char *name, size_t namelen) const
+{
+  size_t plen = strlen(_prefix);
+  if (plen == 1 && _prefix[0] == '/')
+    snprintf(out, outsz, "/%.*s", (int)namelen, name);
+  else
+    snprintf(out, outsz, "%s/%.*s", _prefix, (int)namelen, name);
+}
+
+// ---------------------------------------------------------------------------
+// op_unlink (L4Re::Namespace protocol — leaf name relative to _prefix)
+// ---------------------------------------------------------------------------
+
+l4_ret_t
+Ext4_namespace::op_unlink(L4Re::Namespace::Rights,
+                           Name_buffer const &name)
+{
+  char path[512];
+  build_path(path, sizeof(path), name.data, name.length);
+
+  if (ext4_fremove(path) == EOK) return L4_EOK;
+  if (ext4_dir_rm(path) == EOK)  return L4_EOK;
+  return -L4_ENOENT;
+}
+
+// ---------------------------------------------------------------------------
+// op_ext_mkdir / op_ext_unlink (Ext4_dir_ops protocol — absolute ext4 paths)
+// ---------------------------------------------------------------------------
+
+l4_ret_t
+Ext4_namespace::op_ext_mkdir(Ext4_dir_ops::Rights,
+                              L4::Ipc::Array_ref<char const, unsigned long> const &path)
+{
+  char pbuf[512];
+  size_t n = path.length < sizeof(pbuf) - 1 ? path.length : sizeof(pbuf) - 1;
+  memcpy(pbuf, path.data, n);
+  pbuf[n] = '\0';
+
+  int r = ext4_dir_mk(pbuf);
+  if (r != EOK)
+    {
+      printf("[ext4ns] mkdir '%s' failed: %d\n", pbuf, r);
+      return (r == EEXIST) ? -L4_EEXIST : -L4_EIO;
+    }
+  printf("[ext4ns] mkdir '%s' ok\n", pbuf);
+  return L4_EOK;
+}
+
+l4_ret_t
+Ext4_namespace::op_ext_unlink(Ext4_dir_ops::Rights,
+                               L4::Ipc::Array_ref<char const, unsigned long> const &path)
+{
+  char pbuf[512];
+  size_t n = path.length < sizeof(pbuf) - 1 ? path.length : sizeof(pbuf) - 1;
+  memcpy(pbuf, path.data, n);
+  pbuf[n] = '\0';
+
+  if (ext4_fremove(pbuf) == EOK) { printf("[ext4ns] unlink '%s' ok\n", pbuf); return L4_EOK; }
+  if (ext4_dir_rm(pbuf)  == EOK) { printf("[ext4ns] rmdir  '%s' ok\n", pbuf); return L4_EOK; }
+  printf("[ext4ns] unlink '%s' failed\n", pbuf);
+  return -L4_ENOENT;
+}
+
+// ---------------------------------------------------------------------------
 // op_query
 // ---------------------------------------------------------------------------
 

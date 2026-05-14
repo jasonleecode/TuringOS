@@ -13,20 +13,35 @@
 #pragma once
 
 #include <l4/sys/cxx/ipc_epiface>
+#include <l4/sys/__typeinfo.h>
 #include <l4/re/namespace>
 #include <string.h>
 #include <l4/sys/cxx/ipc_array>
 #include <l4/sys/cxx/ipc_types>
 #include <l4/re/util/object_registry>
+#include "../../include/ext4_file_proto.h"
+
+// Combined IPC interface: L4Re::Namespace (query/ls) + Ext4_dir_ops (mkdir/unlink).
+struct Ext4_ns_iface
+: L4::Kobject_2t<Ext4_ns_iface, L4Re::Namespace, Ext4_dir_ops>
+{
+  // Explicit Rpcs resolves the ambiguity from Iface<PROTO_ANY=0, Ext4_ns_iface>
+  // that Kobject_2t inserts into the dispatch list.
+  using Rpcs = L4::Typeid::Rpcs<
+    L4Re::Namespace::query_t,
+    L4Re::Namespace::register_obj_t,
+    L4Re::Namespace::unlink_t,
+    Ext4_dir_ops::ext_mkdir_t,
+    Ext4_dir_ops::ext_unlink_t
+  >;
+};
 
 class Ext4_namespace
-: public L4::Epiface_t<Ext4_namespace, L4Re::Namespace>
+: public L4::Epiface_t<Ext4_namespace, Ext4_ns_iface>
 {
 public:
   using Name_buffer = L4::Ipc::Array_in_buf<char, unsigned long>;
 
-  // `prefix` is the absolute lwext4 path this namespace is rooted at, e.g.
-  // "/" for the root namespace, "/subdir" for a child directory namespace.
   explicit Ext4_namespace(L4Re::Util::Object_registry *registry,
                           const char *prefix = "/")
   : _registry(registry)
@@ -36,6 +51,8 @@ public:
     memcpy(_prefix, prefix, n);
     _prefix[n] = '\0';
   }
+
+  // ----- L4Re::Namespace ops -----
 
   l4_ret_t op_query(L4Re::Namespace::Rights,
                     Name_buffer const &name,
@@ -48,10 +65,22 @@ public:
                             L4::Ipc::Snd_fpage &)
   { return -L4_EPERM; }
 
-  l4_ret_t op_unlink(L4Re::Namespace::Rights, Name_buffer const &)
-  { return -L4_EPERM; }
+  l4_ret_t op_unlink(L4Re::Namespace::Rights,
+                     Name_buffer const &name);
+
+  // ----- Ext4_dir_ops ops -----
+
+  l4_ret_t op_ext_mkdir(Ext4_dir_ops::Rights,
+                         L4::Ipc::Array_ref<char const, unsigned long> const &path);
+
+  l4_ret_t op_ext_unlink(Ext4_dir_ops::Rights,
+                          L4::Ipc::Array_ref<char const, unsigned long> const &path);
 
 private:
+  // Build absolute ext4 path from _prefix + leaf name.
+  void build_path(char *out, size_t outsz,
+                  const char *name, size_t namelen) const;
+
   L4Re::Util::Object_registry *_registry;
   char _prefix[256];
 };
