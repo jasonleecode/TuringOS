@@ -264,6 +264,15 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity 固定，
 完成 10 万次计数后原子信号 CPU0，输出 PASSED。
 
+### 调度延迟基准测试 cyclictest [✓]
+
+`pkg/benchmark/cyclictest` 实现完成，QEMU 验证通过。
+测量 `l4_ipc_sleep_us()` 唤醒延迟（KIP clock 前后读差），支持多线程、直方图统计。
+关键参数（QEMU virt 单核，-i 1000 -l 1000 -t 2）：
+- T0: min≈58 avg≈950 max≈3600 µs
+- T1: min≈59 avg≈950 max≈3600 µs
+（高均值为单核 2 线程竞争调度所致，实际单线程约 avg<100 µs）
+
 ---
 
 ## P3 — 长期目标

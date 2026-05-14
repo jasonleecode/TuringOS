@@ -87,6 +87,7 @@ while [[ $# -gt 0 ]]; do
                           virt-blk          VirtIO 块设备测试 (需 --disk)
                           virt-blk-shell    ext4 + native_shell (需 --disk)
                           uart-test         virtio-serial Vcon 服务器 + 客户端 (需 --uart)
+                          cyclictest        调度延迟基准测试
   --no-net              禁用网络"
             echo "  --net-shell           启用网络 (默认已启用)"
             echo "  --host-port PORT      主机转发端口 (默认 5555)"

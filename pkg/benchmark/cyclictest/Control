@@ -1,0 +1,1 @@
+requires: stdlibs compiler-rt libstdc++ l4re l4re_c l4util

@@ -167,3 +167,16 @@ module virt-blk.io
 module io
 module virtio-block-driver
 module ext4fs
+
+# ------------------------------------------------------------
+# Entry: cyclictest - scheduling latency benchmark
+# ------------------------------------------------------------
+entry cyclictest
+
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/cyclictest.cfg
+module l4re
+module ned
+module cyclictest.cfg
+module cyclictest
