@@ -35,6 +35,8 @@ module ext4fs
 module fb-drv
 module native_shell
 module libreadline.so
+module cyclictest
+module ipcbench
 
 # ------------------------------------------------------------
 # Entry: demo - 默认演示系统 (使用 native_shell)
@@ -180,3 +182,7 @@ module l4re
 module ned
 module cyclictest.cfg
 module cyclictest
+
+# Entry: ipcbench - IPC performance benchmark (lat/ctx/thru/hack)
+# (entry lives in l4mk/conf/modules.list; this comment is for reference only)
+# run: make -C build/l4re_virt elfimage E=ipcbench

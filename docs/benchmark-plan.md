@@ -123,11 +123,12 @@ cyclictest 只覆盖调度延迟这一个维度。一个完整的实时 OS 性�
 
 | 测试 | 指标 | TuringOS 现状 |
 |------|------|---------------|
-| IPC 往返延迟（round-trip） | µs | ✓ l4re 自带 ipcbench entry |
-| 跨核 IPC 延迟 vs 同核 | µs，需 SMP | ✗ 未在 SMP 下系统化测量 |
-| IPC 吞吐（消息/秒） | msg/s | ✗ |
-| 大消息传输带宽 | MB/s（shared-DS 路径） | ✗ |
-| Syscall 开销 | 裸系统调用 ns | ✓ ipcbench 包含 syscallbench |
+| IPC 往返延迟（round-trip） | µs | ✓ ipcbench（见下节） |
+| 跨核 IPC 延迟 vs 同核 | µs，需 SMP | ✓ ipcbench lat 模式自动对比 |
+| IPC 吞吐（消息/秒） | msg/s | ✓ ipcbench thru/hack 模式 |
+| 上下文切换时间 | µs | ✓ ipcbench ctx 模式（round-trip/2） |
+| hackbench（N 对并发） | msg/s | ✓ ipcbench hack 模式 |
+| 大消息传输带宽 | MB/s（shared-DS 路径） | ✗ 待做 |
 
 **为什么重要**：L4Re 所有服务调用都是 IPC，IPC 延迟直接决定系统调用和驱动访问的代价。
 
@@ -188,6 +189,117 @@ cyclictest 只覆盖调度延迟这一个维度。一个完整的实时 OS 性�
 | 冷启动时间 | bootstrap → 第一个用户程序输出 |
 | 内存基线占用 | 空载时 kernel + l4re + ned 占用 |
 | 多服务并发稳定性 | 长时间运行（24h）无崩溃 |
+
+---
+
+## 三点五、ipcbench 设计方案
+
+> 编写日期：2026-05-15
+
+### 定位
+
+一个二进制，4 种测试模式，覆盖 IPC 延迟、上下文切换、吞吐、并发压力。
+
+```
+run ipcbench              # 默认：lat 模式（同核 + 跨核自动对比）
+run ipcbench -m ctx       # 上下文切换时间
+run ipcbench -m thru      # 单对吞吐
+run ipcbench -m hack -n 8 # hackbench（8 对并发）
+```
+
+### 模式说明
+
+#### lat — IPC 往返延迟（核心）
+
+```
+client: t0 = kip_ns(); l4_ipc_call(gate); t1 = kip_ns(); lat = t1 - t0
+server: l4_ipc_wait() → loop: l4_ipc_reply_and_wait()
+```
+
+自动运行两轮，无需手动指定 CPU：
+- Round 1：client=CPU0，server=CPU0（同核）
+- Round 2：client=CPU0，server=CPU1（跨核）
+- 输出 overhead 绝对值与百分比
+
+#### ctx — 上下文切换
+
+与 lat 相同路径，将 round-trip/2 作为单次上下文切换时间。
+
+#### thru — 单对吞吐
+
+固定时长（`-D 秒`）内 client 全速 `l4_ipc_call()`，统计 Kcalls/s。
+不做延迟直方图（计时开销会拖低吞吐数字）。
+
+#### hack — N 对并发（hackbench 等价）
+
+创建 N 对 (client, server) pthread，每对独立 gate，同时跑 D 秒，汇总总 msg/s。
+压调度器吞吐极限。
+
+### 参数
+
+| 参数 | 说明 | 默认 |
+|------|------|------|
+| `-m <lat\|ctx\|thru\|hack>` | 测试模式 | lat |
+| `-i <n>` | 迭代次数（lat/ctx） | 10000 |
+| `-D <s>` | 运行时长秒（thru/hack） | 3 |
+| `-n <n>` | 并发对数（hack） | 4 |
+| `-p <prio>` | 线程优先级 | 10 |
+
+### 关键实现
+
+**Gate 创建：**
+```c
+// 1. 分配 cap slot
+auto gate = L4Re::Util::cap_alloc.alloc<L4::Ipc_gate>();
+// 2. 创建未绑定 gate
+l4_factory_create_gate(L4_BASE_FACTORY_CAP, gate.cap(), L4_INVALID_CAP, 0);
+// 3. 启动 server pthread
+pthread_create(&stid, ...);
+// 4. 绑定 gate → server 线程
+l4_ipc_gate_bind_thread(gate.cap(), pthread_l4_cap(stid), 0);
+// 5. 设置 CPU 亲和性
+sp.affinity = l4_sched_cpu_set(cpu_id, 0, 1);
+scheduler->run_thread(pthread_l4_cap(stid), sp);
+```
+
+**同步**：gate 在 server 进入 `l4_ipc_wait()` 前会阻塞 client，天然同步。
+lat 模式第一次 IPC 作预热，丢弃计时结果。
+
+**统计**：复用 cyclictest 的 `isqrt_ull()`、`percentile_ns()`、`pr_us()` 逻辑。
+
+**SMP 检测**：跑 cross-core 前查询 `l4_scheduler_info()`，CPU1 不可用则 skip。
+
+### 文件结构
+
+```
+pkg/benchmark/ipcbench/
+├── Control          (requires: stdlibs libstdc++ l4re l4re_c l4util)
+├── Makefile
+└── src/
+    ├── Makefile     (REQUIRES_LIBS += libpthread pthread-l4)
+    └── ipcbench.cc  (~400 行)
+
+conf/ipcbench.cfg
+conf/modules.list    (新增 entry ipcbench)
+```
+
+### 预期输出（lat 模式）
+
+```
+=== ipcbench results ===
+  mode       : lat  iterations=10000  priority=10
+
+  same-core  (client=CPU0  server=CPU0):
+    min=0.800 us  avg=1.856 us  max=5.432 us  stddev=0.312 us
+    p50=1.800 us  p90=2.100 us  p99=3.200 us  p99.9=4.500 us
+
+  cross-core (client=CPU0  server=CPU1):
+    min=1.200 us  avg=3.012 us  max=8.765 us  stddev=0.521 us
+    p50=2.900 us  p90=3.500 us  p99=5.200 us  p99.9=7.800 us
+
+  cross-core overhead: +1.156 us avg (+62%)
+========================
+```
 
 ---
 
