@@ -111,11 +111,14 @@ static void read_login_line(char *buf, int maxlen, bool show_star)
             break;
         } else if ((c == '\b' || c == 127) && i > 0) {
             i--;
-            if (show_star) { printf("\b \b"); fflush(stdout); }
-            else           { printf(" \b");   fflush(stdout); }
+            // vcon already echoed \b (cursor moved back over the last char/*)
+            printf(" \b"); fflush(stdout);
         } else if (i < maxlen - 1 && c >= 0x20) {
             buf[i++] = (char)c;
-            if (show_star) { putchar('*'); fflush(stdout); }
+            if (show_star) {
+                // vcon echoed the real char; overwrite it with * via \b
+                printf("\b*"); fflush(stdout);
+            }
         }
     }
     buf[i] = '\0';
