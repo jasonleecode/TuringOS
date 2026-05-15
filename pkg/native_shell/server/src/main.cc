@@ -97,35 +97,28 @@ static constexpr int MAX_LOGIN_ATTEMPTS = 3;
 //   show_star=true  (password): disable serial echo via tcsetattr, show '*' manually.
 static void read_login_line(char *buf, int maxlen, bool show_star)
 {
-    struct termios old_t;
-    bool echo_disabled = false;
-    if (show_star && tcgetattr(STDIN_FILENO, &old_t) == 0) {
-        struct termios t = old_t;
-        t.c_lflag &= ~(unsigned)(ECHO | ECHOE | ECHOK | ECHONL);
-        tcsetattr(STDIN_FILENO, TCSANOW, &t);
-        echo_disabled = true;
-    }
-
+    // Note: tcsetattr/tcgetattr are intentionally not used here.
+    // L4Re's vcon TCSETS ioctl is a stub and interacts badly with
+    // uclibc's malloc mutex, causing heap corruption on the first
+    // free() call after the login sequence. The stdin_monitor thread
+    // delivers raw characters via kbd_pop(), so tty-layer echo
+    // suppression is neither needed nor safe.
     int i = 0;
     for (;;) {
         int c = kbd_pop();
         if (c == '\n' || c == '\r') {
-            if (show_star) { putchar('\n'); fflush(stdout); } // echo disabled: need manual newline
+            if (show_star) { putchar('\n'); fflush(stdout); }
             break;
         } else if ((c == '\b' || c == 127) && i > 0) {
             i--;
-            if (show_star) { printf("\b \b"); fflush(stdout); } // erase the '*' we drew
-            else           { printf(" \b");   fflush(stdout); } // erase serial-echoed char
+            if (show_star) { printf("\b \b"); fflush(stdout); }
+            else           { printf(" \b");   fflush(stdout); }
         } else if (i < maxlen - 1 && c >= 0x20) {
             buf[i++] = (char)c;
             if (show_star) { putchar('*'); fflush(stdout); }
-            // else: serial echo already shows the char
         }
     }
     buf[i] = '\0';
-
-    if (echo_disabled)
-        tcsetattr(STDIN_FILENO, TCSANOW, &old_t);
 }
 
 static bool do_login()
@@ -250,6 +243,11 @@ int main(int argc, char const* const* argv)
     rl_catch_signals             = 1;
     rl_getc_function             = rl_getc_buf;
     rl_attempted_completion_function = shell_completion;
+    /* L4Re vcon TCSETS ioctl is a stub that corrupts uclibc's malloc heap.
+     * Disable readline's terminal prep entirely — raw chars arrive via our
+     * kbd ring buffer, so cooked-mode terminal setup is neither needed nor safe. */
+    rl_prep_term_function        = nullptr;
+    rl_deprep_term_function      = nullptr;
 
     klog_info(KLOG_KERN, "shell ready");
     klog_flush();
@@ -262,6 +260,10 @@ int main(int argc, char const* const* argv)
     klog_flush();
     printf("\nWelcome, %s!\n", LOGIN_USER);
     printf("Type 'help' for available commands.\n\n");
+
+    /* Heap probe: if this crashes, the heap is corrupted before readline. */
+    { void *p = malloc(128); if (p) { memset(p, 0, 128); free(p); } }
+    printf("[heap probe OK]\n"); fflush(stdout);
 
     char  *line = nullptr;
     char  *cmd_argv[MAX_ARGS];

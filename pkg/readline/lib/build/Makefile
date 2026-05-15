@@ -11,7 +11,7 @@ PRIVATE_INCDIR = $(PKGDIR)/lib/build   \
 
 WARNINGS    = -Wno-missing-prototypes -Wno-parentheses
 
-DEFINES     = -DHAVE_CONFIG_H -D__L4
+DEFINES     = -DHAVE_CONFIG_H -D__L4 -DNO_TTY_DRIVER
 
 #DEBUG      = 1
 

@@ -17,7 +17,8 @@ static int _DEBUG = 0;
 int tputs( const char *str, int affcnt, int (*putc)(int))
 {
     int i;
-    for(i=0; i<strlen(str); i++)
+    if (!str) return 0;
+    for(i=0; i<(int)strlen(str); i++)
     {
         (*putc)(str[i]);
     }
@@ -51,24 +52,21 @@ int tgetnum( const char *id )
 
 char *tgetstr( const char *id, char **area )
 {
-    char *ret;
-
     LOGd(_DEBUG,"tgetstr: %s\n", id);
-    // allocate if necessary
-    if (!*area)
-        *area = (char *)malloc(2); // 2 byte for a character and its terminating 0
-
-    if (strcmp(id,"le")==0)
-        *area = "\b";
-
-    ret = *area;                    // save area`s value
-    area++;                         // make area point to next entry
-
-    return strdup(ret);             // finally return ret
+    (void)area;
+    /* Return the backspace sequence for "le"; NULL for everything else.
+     * NULL means "no capability", which is safe — readline falls back to
+     * hardcoded defaults (e.g. "\r" for cr) or simply skips the operation. */
+    if (strcmp(id, "le") == 0) return strdup("\b");
+    return NULL;
 }
 
 int tgetent( char *bp, const char *name )
 {
-    LOGd(_DEBUG,"tgetent: %s, %s\n", bp, name);
-    return 0;
+    LOGd(_DEBUG,"tgetent: name=%s\n", name);
+    (void)bp;
+    /* Return 1 (TGETENT_SUCCESS) so readline keeps term_string_buffer and
+     * term_buffer alive.  Returning 0 triggers FREE() of both — the sequential
+     * free of two adjacent heap chunks corrupts uclibc's malloc arena. */
+    return 1;
 }

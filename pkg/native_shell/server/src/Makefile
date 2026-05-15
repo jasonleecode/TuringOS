@@ -15,6 +15,11 @@ PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include \
 # Force linker to pull in the ext4_client TU that registers the File_factory.
 LDFLAGS += -u ext4_client_module_init
 
+# Allow tcgetattr/tcsetattr in libreadline.a(replacements.o) to win over uclibc.
+# L4Re vcon TCGETS/TCSETS ioctl corrupts the malloc heap; the readline replacements
+# provide safe no-ops so all tty ioctl calls in native_shell become no-ops.
+
+
 include $(L4DIR)/mk/prog.mk
 
 # backend/vfs.h uses off64_t/stat64 which require __USE_LARGEFILE64.

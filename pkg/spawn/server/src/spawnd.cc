@@ -124,10 +124,17 @@ l4_ret_t Spawnd::op_spawn(Spawn_svr::Rights,
     memcpy(path_buf, path.data, plen);
     path_buf[plen] = '\0';
 
-    /* Unpack argv from the args buffer */
+    /* Copy args OUT of the IPC UTCB buffer before any further IPC calls.
+     * unpack_args sets argv[i] pointers into this buffer.  Without the copy,
+     * loader.launch()'s internal IPC (read_infos, alloc_app_stack, …) would
+     * overwrite the UTCB before push_argv_strings() can read the strings. */
+    char args_copy[1024];
+    size_t copy_len = args.length < sizeof(args_copy) ? args.length : sizeof(args_copy);
+    memcpy(args_copy, args.data, copy_len);
+
     static constexpr int MAX_ARGV = 64;
     char *argv[MAX_ARGV + 1];
-    unpack_args(args.data, args.length, argv, MAX_ARGV);
+    unpack_args(args_copy, copy_len, argv, MAX_ARGV);
 
     Child_task *slot = do_spawn(path_buf, argv, nullptr);
     if (!slot)
