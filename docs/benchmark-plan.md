@@ -1,7 +1,7 @@
 # TuringOS 性能测试体系规划
 
-> 编写日期：2026-05-14
-> 现状：`pkg/benchmark/cyclictest` 基础版本已完成并在 QEMU 验证。
+> 编写日期：2026-05-14  更新：2026-05-15
+> 现状：cyclictest 基础版已完成；`run cyclictest -t 2 -l 300 -i 500` 运行时参数传递已修复并验证。
 
 ---
 
@@ -70,7 +70,7 @@ Linux rt-tests 套件中的 cyclictest 是实时系统调度延迟测试的工�
 | min / avg / max（per-thread + ALL） | |
 | 固定 100 桶直方图（µs 分辨率） | |
 | 多线程（pthread，最多 8 个） | |
-| 可配置 interval / loops / threads / priority | |
+| 运行时可配置参数（-i/-l/-t/-p/-b） | `run cyclictest -t 2 -l 300 -i 500` 直接生效，无需重建镜像（2026-05-15 修复 spawnd UTCB 覆写 bug + readline 崩溃） |
 | breakmax 阈值 + overrun 计数 | |
 
 ### 2.2 缺失功能（按重要性排序）
@@ -195,8 +195,9 @@ cyclictest 只覆盖调度延迟这一个维度。一个完整的实时 OS 性�
 
 ### 近期（1–2 周）：完善 cyclictest 本身
 
+- [✓] ~~运行时可配置参数~~（已完成，2026-05-15）
 1. **切换到 ns 精度**：`now_us()` → `now_ns()`，用 `l4_kip_clock_ns()`，统计和直方图改为 ns 单位
-2. **加 CPU affinity**：`-a` 参数，`l4_sched_param_t` 的 `affinity` 字段，2 核下可测 4+4 绑核 vs 不绑核差异
+2. **加 CPU affinity**：`-a` 参数，`l4_sched_param_t` 的 `affinity` 字段，2 核下可测绑核 vs 不绑核差异
 3. **加百分位 + 标准差**：直方图后处理，无需额外数据结构
 4. **加 -D duration 模式**：用 KIP clock 判断运行时长代替固定循环次数
 
