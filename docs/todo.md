@@ -19,6 +19,11 @@
 | [✓] | 终端登录（`login:` / `Password:` 提示，密码显示 `*`，默认 root/12345678） |
 | [✓] | 构建工具链升级：virt/bbb/imx6ul 统一使用 GCC 12（上游要求 GCC 11+） |
 
+
+uvmm
+tvmm
+
+
 ---
 
 ## P0.5 — 上游同步 [✓]
@@ -273,15 +278,15 @@ QEMU virt（-smp 2）SMP 验证通过：CPU1 线程由 L4Re scheduler affinity �
 |------|------|
 | [✓] | 基础 sleep→wakeup 延迟测量 |
 | [✓] | min / avg / max（per-thread + 汇总） |
-| [✓] | 固定 100 桶直方图（µs 分辨率） |
+| [✓] | **纳秒精度**（`l4_kip_clock_ns()`，输出 "X.XXX us"）（2026-05-15） |
+| [✓] | **百分位统计**（p50/p90/p99/p99.9，直方图后处理）（2026-05-15） |
+| [✓] | **标准差**（integer Newton sqrt，无 libm 依赖）（2026-05-15） |
+| [✓] | **1000 桶直方图**（1µs/桶，overflow ≥999µs；原 100 桶扩展）（2026-05-15） |
 | [✓] | 多线程（pthread，最多 8 个） |
 | [✓] | 参数解析（-i / -l / -t / -p / -b） |
-| [✓] | QEMU 双核 8 线程验证通过（ALL: min=26 avg=985 max=5568 µs） |
+| [✓] | QEMU 双核 8 线程验证通过（ALL: min=36.288 us avg=976.607 us max=3099.136 us stddev=165.004 us） |
 | [✓] | 运行时可配置：`run cyclictest -t 2 -l 300 -i 500` 直接生效（2026-05-15 修复 spawnd UTCB 覆写 + readline 崩溃） |
-| 待做 | 纳秒精度（`l4_kip_clock_ns()` 已可用，直接替换） |
 | 待做 | CPU 亲和性（`-a` 绑核，消除过度订阅干扰） |
-| 待做 | 百分位统计（p99 / p99.9，比 max 更有工程意义） |
-| 待做 | 标准差（抖动量化） |
 | 待做 | Duration 模式（`-D` 秒，替代固定循环次数） |
 | 待做 | 线程间距（`-d N`，各线程 interval 错开） |
 | 待做 | 预热阶段（`-W N`，消除首次 cache miss） |
