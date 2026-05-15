@@ -251,6 +251,20 @@ int main(int argc, char const* const* argv)
      * kbd ring buffer, so cooked-mode terminal setup is neither needed nor safe. */
     rl_prep_term_function        = nullptr;
     rl_deprep_term_function      = nullptr;
+    /* vcon unconditionally echoes every input char, so readline's built-in
+     * redisplay (which uses \b sequences) fights the vcon echo and leaves
+     * deleted characters visible on screen.  Replace it with a full-line
+     * redraw: \r + prompt + buffer + ANSI erase-to-EOL.  This is always
+     * correct regardless of what vcon has already echoed. */
+    rl_redisplay_function = []() {
+        const char *prompt = rl_display_prompt ? rl_display_prompt : "";
+        write(STDOUT_FILENO, "\r", 1);
+        write(STDOUT_FILENO, prompt, strlen(prompt));
+        write(STDOUT_FILENO, rl_line_buffer, rl_end);
+        write(STDOUT_FILENO, "\033[K", 3);          // erase to end of line
+        for (int i = rl_point; i < rl_end; i++)    // reposition cursor
+            write(STDOUT_FILENO, "\b", 1);
+    };
 
     klog_info(KLOG_KERN, "shell ready");
     klog_flush();
