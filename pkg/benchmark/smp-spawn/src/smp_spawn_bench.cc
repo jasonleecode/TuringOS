@@ -128,14 +128,15 @@ int main(int argc, char **argv)
     if (n_spawners < 1) n_spawners = 1;
     if (n_spawners > 8) n_spawners = 8;
 
-    /* Detect SMP. */
+    /* Detect SMP: cs.map bitmask has one bit per online CPU. */
     l4_umword_t cpu_max = 0;
-    l4_sched_cpu_set_t cs = l4_sched_cpu_set(0, 0, 1);
+    l4_sched_cpu_set_t cs = l4_sched_cpu_set(0, 0, ~0UL);
     long r = l4_error(L4Re::Env::env()->scheduler()->info(&cpu_max, &cs));
-    bool smp = (!r && cpu_max >= 1);
+    unsigned n_cpus = (!r) ? (unsigned)__builtin_popcountl(cs.map) : 1;
+    bool smp = (n_cpus >= 2);
 
-    printf("[smp-spawn-bench] duration=%us spawners=%u prio=%u CPUs=%lu SMP=%s\n",
-           duration_s, n_spawners, prio, cpu_max + 1, smp ? "yes" : "no");
+    printf("[smp-spawn-bench] duration=%us spawners=%u prio=%u CPUs=%u SMP=%s\n",
+           duration_s, n_spawners, prio, n_cpus, smp ? "yes" : "no");
 
     /* Pin main thread to CPU0 at the base priority. */
     set_affinity(pthread_l4_cap(pthread_self()), 0, prio);
@@ -211,7 +212,7 @@ int main(int argc, char **argv)
             sp += spawners[i].count;
             sf += spawners[i].fail;
         }
-        printf("[smp-spawn-bench] t=%us: spawns=%lu fail=%lu\n", slept, sp, sf);
+        printf("[smp-spawn-bench] t=%us: cycles=%lu (ok=%lu)\n", slept, sp + sf, sp);
     }
 
     /* Signal IPC pair to wind down (detached — task teardown cleans up). */
@@ -231,12 +232,14 @@ int main(int argc, char **argv)
         total_fail   += spawners[i].fail;
     }
 
-    printf("\n[smp-spawn-bench] Results (%us, %lu CPUs, %s):\n",
-           duration_s, cpu_max + 1, smp ? "cross-CPU IPC" : "same-CPU IPC");
+    printf("\n[smp-spawn-bench] Results (%us, %u CPUs, %s):\n",
+           duration_s, n_cpus, smp ? "cross-CPU IPC" : "same-CPU IPC");
     if (have_spawnd)
-        printf("  Spawn cycles    : %lu ok + %lu fail = %.1f /s\n",
-               total_spawns, total_fail,
-               (double)(total_spawns + total_fail) / duration_s);
+        printf("  Spawn cycles    : %lu total = %.1f /s"
+               "  (exit-IPC ok=%lu, race=%lu)\n",
+               total_spawns + total_fail,
+               (double)(total_spawns + total_fail) / duration_s,
+               total_spawns, total_fail);
     else
         printf("  Spawns          : skipped (no spawnd cap)\n");
     printf("[smp-spawn-bench] PASS — survived %us without kernel panic\n",
