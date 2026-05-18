@@ -350,8 +350,8 @@ void cmd_date(int argc, char **argv)
         l4_uint64_t new_offset = static_cast<l4_uint64_t>(t) * 1000000000ULL - uptime_ns;
 
         if (l4rtc_set_offset_to_realtime(rtc_cap, new_offset) == 0) {
-            struct tm *tm = gmtime(&t);
-            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", tm);
+            struct tm *tm = localtime(&t);
+            strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S %Z", tm);
             printf("Date set to: %s\n", buf);
         } else {
             printf("date: failed to set RTC time\n");
@@ -363,8 +363,8 @@ void cmd_date(int argc, char **argv)
     clock_gettime(CLOCK_REALTIME,  &real);
 
     if (real.tv_sec > 946684800L) {
-        struct tm *tm = gmtime(&real.tv_sec);
-        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S UTC", tm);
+        struct tm *tm = localtime(&real.tv_sec);
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S %Z", tm);
         printf("%s\n", buf);
     } else {
         long h = mono.tv_sec / 3600;

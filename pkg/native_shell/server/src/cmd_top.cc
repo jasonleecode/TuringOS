@@ -17,6 +17,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <ctime>
+#include <time.h>
 
 static constexpr int SAMPLE_MS  = 800;
 static constexpr int MAX_SLOTS  = 32;
@@ -102,7 +103,7 @@ static void render(l4_uint64_t delta_us)
 
     /* Row 0: title bar */
     time_t now = time(nullptr);
-    struct tm *tm_info = gmtime(&now);
+    struct tm *tm_info = localtime(&now);
     char timebuf[12] = "--:--:--";
     if (tm_info)
         snprintf(timebuf, sizeof(timebuf), "%02d:%02d:%02d",
@@ -111,10 +112,25 @@ static void render(l4_uint64_t delta_us)
     unsigned long total_mb, free_mb;
     mem_stats(&total_mb, &free_mb);
 
+    struct timespec mono;
+    clock_gettime(CLOCK_MONOTONIC, &mono);
+    long up_total = mono.tv_sec;
+    long up_days  = up_total / 86400;
+    long up_h     = (up_total % 86400) / 3600;
+    long up_m     = (up_total % 3600) / 60;
+    long up_s     = up_total % 60;
+    char uptimebuf[32];
+    if (up_days > 0)
+        snprintf(uptimebuf, sizeof(uptimebuf), "up %ldd %02ld:%02ld:%02ld",
+                 up_days, up_h, up_m, up_s);
+    else
+        snprintf(uptimebuf, sizeof(uptimebuf), "up %02ld:%02ld:%02ld",
+                 up_h, up_m, up_s);
+
     char hdr[256];
     snprintf(hdr, sizeof(hdr),
-        " TuringOS top  %s    Tasks: %d    Mem: %lu M / %lu M free  ",
-        timebuf, g_nvalid, total_mb, free_mb);
+        " TuringOS top  %s  %s    Tasks: %d    Mem: %lu M / %lu M free  ",
+        timebuf, uptimebuf, g_nvalid, total_mb, free_mb);
     tb_print(0, 0, TB_BLACK, TB_CYAN, hdr);
     for (int x = (int)strlen(hdr); x < w; x++)
         tb_set_cell(x, 0, ' ', TB_BLACK, TB_CYAN);

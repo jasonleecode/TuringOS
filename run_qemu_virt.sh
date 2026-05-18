@@ -175,7 +175,7 @@ elif echo "$IMAGE" | grep -q "l4re_virt"; then
     MACHINE_TYPE="arm"
     QEMU_ARCH="qemu-system-arm"
     CPU="-cpu cortex-a15"
-    MEM="-m 512M"
+    MEM="-m 48M"
     MACHINE="-M virt"
 else
     MACHINE_TYPE="aarch64"
