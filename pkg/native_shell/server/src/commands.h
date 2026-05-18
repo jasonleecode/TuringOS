@@ -56,6 +56,7 @@ bool net_is_ready();   /* true once virtio-net + lwIP fully up */
 
 /* system */
 void cmd_list_tasks(int argc, char **argv);
+void cmd_top(int argc, char **argv);
 void cmd_dmesg(int argc, char **argv);
 
 /* Background task registry */
@@ -69,3 +70,6 @@ extern volatile sig_atomic_t g_shell_interrupt;
 
 /* Set by main loop when trailing '&' is detected; consumed by cmd_run */
 extern bool g_run_background;
+
+int kbd_try_pop();  /* non-blocking key read; -1 if empty */
+bool task_name_by_handle(l4_uint32_t handle, char *buf, int bufsz);

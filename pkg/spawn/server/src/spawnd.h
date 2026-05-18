@@ -37,6 +37,14 @@ public:
     l4_ret_t op_kill(Spawn_svr::Rights,
                      l4_uint32_t handle);
 
+    l4_ret_t op_task_count(Spawn_svr::Rights);
+
+    l4_ret_t op_task_stat(Spawn_svr::Rights,
+                          l4_uint32_t  slot,
+                          l4_uint64_t &cpu_us,
+                          l4_uint32_t &state,
+                          l4_uint32_t &handle);
+
 private:
     Task_table _table;
 

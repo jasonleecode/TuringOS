@@ -64,5 +64,24 @@ struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901>
     L4_INLINE_RPC(long, kill,
         (l4_uint32_t handle));
 
-    typedef L4::Typeid::Rpcs<spawn_t, wait_t, kill_t> Rpcs;
+    /*
+     * Count of non-FREE task slots currently in the table.
+     * Returns: number of RUNNING + EXITED slots (0..Task_table::MAX).
+     */
+    L4_INLINE_RPC(long, task_count, ());
+
+    /*
+     * Stats for one task-table slot (0-based raw index 0..31).
+     * out cpu_us:  cumulative CPU microseconds (l4_kernel_clock_t value)
+     * out state:   1=RUNNING  2=EXITED  (never 0=FREE — returns -L4_ENOENT)
+     * out handle:  spawnd handle for this task
+     * Returns: 0 on success, -L4_ENOENT if slot is FREE or index out of range.
+     */
+    L4_INLINE_RPC(long, task_stat,
+        (l4_uint32_t  slot,
+         l4_uint64_t &cpu_us,
+         l4_uint32_t &state,
+         l4_uint32_t &handle));
+
+    typedef L4::Typeid::Rpcs<spawn_t, wait_t, kill_t, task_count_t, task_stat_t> Rpcs;
 };

@@ -2,6 +2,7 @@
 
 #include <l4/re/error_helper>
 #include <l4/sys/ipc.h>
+#include <l4/sys/thread.h>
 #include <cstdio>
 #include <cstring>
 
@@ -179,5 +180,28 @@ l4_ret_t Spawnd::op_kill(Spawn_svr::Rights, l4_uint32_t handle)
 
     printf("[spawnd] kill: handle=%u (%s)\n", handle, t->name);
     _table.free(handle);   /* Unique_del_cap RAII deletes kernel objects */
+    return L4_EOK;
+}
+
+l4_ret_t Spawnd::op_task_count(Spawn_svr::Rights)
+{
+    return (l4_ret_t)_table.count();
+}
+
+l4_ret_t Spawnd::op_task_stat(Spawn_svr::Rights,
+                               l4_uint32_t  slot,
+                               l4_uint64_t &cpu_us,
+                               l4_uint32_t &state,
+                               l4_uint32_t &handle)
+{
+    Child_task *t = _table.at((int)slot);
+    if (!t || t->state == Child_task::FREE)
+        return -L4_ENOENT;
+
+    l4_kernel_clock_t kc = 0;
+    l4_thread_stats_time(t->thread.get().cap(), &kc);
+    cpu_us = (l4_uint64_t)kc;
+    state  = (l4_uint32_t)t->state;
+    handle = t->handle;
     return L4_EOK;
 }

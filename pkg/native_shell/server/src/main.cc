@@ -57,6 +57,20 @@ static int kbd_pop()
     return (unsigned char)c;
 }
 
+/* Non-blocking variant: returns -1 immediately if buffer is empty. */
+int kbd_try_pop()
+{
+    pthread_mutex_lock(&g_kbd_mtx);
+    if (g_kbd_head == g_kbd_tail) {
+        pthread_mutex_unlock(&g_kbd_mtx);
+        return -1;
+    }
+    char c = g_kbd_buf[g_kbd_tail];
+    g_kbd_tail = (g_kbd_tail + 1) % sizeof(g_kbd_buf);
+    pthread_mutex_unlock(&g_kbd_mtx);
+    return (unsigned char)c;
+}
+
 /* readline getc hook — reads from ring buffer instead of stdin */
 static int rl_getc_buf(FILE *) { return kbd_pop(); }
 

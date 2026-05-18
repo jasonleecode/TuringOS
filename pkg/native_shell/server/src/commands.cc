@@ -46,6 +46,7 @@ shell_cmd commands[] = {
     { "date",       "Print current date and time",          cmd_date       },
     { "uptime",     "Show system uptime",                   cmd_uptime     },
     { "list_tasks", "List background tasks",                cmd_list_tasks },
+    { "top",        "Process monitor (q to quit)",          cmd_top        },
     { "dmesg",      "Show/manage kernel log  [-c] [-l N] [-n N] [--save]", cmd_dmesg },
     /* program execution */
     { "run",        "Run a program  <rom/xxx|/ext4/...> [&]",   cmd_run  },
@@ -775,6 +776,20 @@ void task_register_proc(l4_uint32_t handle, const char *name)
         g_task_count++;
     }
     pthread_mutex_unlock(&g_task_mtx);
+}
+
+bool task_name_by_handle(l4_uint32_t handle, char *buf, int bufsz)
+{
+    pthread_mutex_lock(&g_task_mtx);
+    for (int i = 0; i < g_task_count; i++) {
+        if (g_tasks[i].active && g_tasks[i].handle == handle) {
+            snprintf(buf, bufsz, "%s", g_tasks[i].name);
+            pthread_mutex_unlock(&g_task_mtx);
+            return true;
+        }
+    }
+    pthread_mutex_unlock(&g_task_mtx);
+    return false;
 }
 
 void task_unregister_proc(l4_uint32_t handle)
