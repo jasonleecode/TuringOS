@@ -37,6 +37,7 @@ module native_shell
 module libreadline.so
 module cyclictest
 module ipcbench
+module smp-spawn-bench
 
 # ------------------------------------------------------------
 # Entry: demo - 默认演示系统 (使用 native_shell)
