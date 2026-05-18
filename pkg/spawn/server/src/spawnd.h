@@ -1,8 +1,10 @@
 #pragma once
 
 #include <l4/sys/cxx/ipc_epiface>
+#include <l4/sys/types.h>
 #include <spawn_ipc.h>
 #include <pthread.h>
+#include <pthread-l4.h>
 
 #include "task_table.h"
 #include "app_model.h"
@@ -37,6 +39,7 @@ private:
     Task_table      _table;
     pthread_mutex_t _mtx;
     pthread_t       _reaper;
+    l4_cap_idx_t    _reaper_cap;
     volatile bool   _stop;
 
     /*

@@ -2,6 +2,7 @@
 
 #include <l4/re/error_helper>
 #include <l4/sys/ipc.h>
+#include <l4/sys/ipc_gate.h>
 #include <l4/sys/thread.h>
 #include <cstdio>
 #include <cstring>
@@ -10,10 +11,11 @@
 /* Constructor / Destructor                                             */
 /* ------------------------------------------------------------------ */
 
-Spawnd::Spawnd() : _stop(false)
+Spawnd::Spawnd() : _reaper_cap(L4_INVALID_CAP), _stop(false)
 {
     pthread_mutex_init(&_mtx, nullptr);
     pthread_create(&_reaper, nullptr, &Spawnd::reaper_main, this);
+    _reaper_cap = pthread_l4_cap(_reaper);
 }
 
 Spawnd::~Spawnd()
@@ -25,48 +27,73 @@ Spawnd::~Spawnd()
 
 /* ------------------------------------------------------------------ */
 /* Reaper thread                                                        */
+/*                                                                     */
+/* All parent gates are bound to this thread.  The child's exit path   */
+/* calls l4_ipc_call(parent_gate) which delivers here.  We read the    */
+/* exit code, mark the slot EXITED (waking do_wait's poll), then reply  */
+/* (send timeout 0 — harmless if the task was already killed) and loop. */
+/* On a 500 ms receive timeout we fall through to crash detection.      */
 /* ------------------------------------------------------------------ */
 
 void *Spawnd::reaper_main(void *arg)
 {
-    auto *self = static_cast<Spawnd *>(arg);
+    auto *self  = static_cast<Spawnd *>(arg);
+    l4_utcb_t  *u  = l4_utcb();
+    l4_umword_t label = 0;
+    /* 500 ms receive timeout for periodic crash detection. */
+    l4_timeout_t to = l4_timeout(L4_IPC_TIMEOUT_0,
+                                  l4_timeout_from_us(500000));
+    l4_msgtag_t tag = l4_ipc_wait(u, &label, to);
+
     while (!self->_stop) {
-        /* Wake every 500 ms to check background children. */
-        l4_ipc_sleep(l4_timeout(L4_IPC_TIMEOUT_0, l4_timeout_from_us(500000)));
-        pthread_mutex_lock(&self->_mtx);
-        self->reap_once();
-        pthread_mutex_unlock(&self->_mtx);
+        if (!l4_msgtag_has_error(tag)) {
+            /* Child sent exit IPC.  The kernel ORs permission bits into the
+             * label's lower 2 bits; shift right to recover the handle. */
+            l4_uint32_t handle = (l4_uint32_t)(label >> 2);
+            l4_msg_regs_t *mr = l4_utcb_mr_u(u);
+            int  nw   = l4_msgtag_words(tag);
+            long code = (nw >= 2) ? (long)mr->mr[1]
+                      : (nw >= 1) ? (long)mr->mr[0] : 0;
+            pthread_mutex_lock(&self->_mtx);
+            Child_task *t = self->_table.find(handle);
+            if (t && t->state != Child_task::EXITED) {
+                /* Accept exit IPC in LOADING state too: child can exit
+                 * before do_spawn transitions the slot to RUNNING. */
+                t->state     = Child_task::EXITED;
+                t->exit_code = code;
+                printf("[spawnd] reaper: [%u] '%s' exited (code=%ld)\n",
+                       t->handle, t->name, code);
+            }
+            pthread_mutex_unlock(&self->_mtx);
+
+            /* Reply so child's l4_ipc_call returns (send timeout 0:
+             * skip safely if child task was already freed). */
+            tag = l4_ipc_reply_and_wait(u, l4_msgtag(0, 0, 0, 0),
+                                         &label, to);
+        } else {
+            long err = l4_ipc_error(tag, u);
+            if (err == L4_IPC_RETIMEOUT) {
+                /* Periodic crash detection via thread liveness. */
+                pthread_mutex_lock(&self->_mtx);
+                self->reap_once();
+                pthread_mutex_unlock(&self->_mtx);
+            }
+            tag = l4_ipc_wait(u, &label, to);
+        }
     }
     return nullptr;
 }
 
 void Spawnd::reap_once()
 {
-    /* _mtx must be held by caller. */
-    l4_msg_regs_t *mr = l4_utcb_mr();
-
+    /* _mtx must be held by caller.
+     * Detect crashed children by checking thread-cap liveness.
+     * Exit-IPC detection is handled by the reaper's IPC loop above. */
     for (int i = 0; i < Task_table::MAX; i++) {
         Child_task *t = _table.at(i);
-        if (!t || t->state != Child_task::RUNNING || t->being_waited)
+        if (!t || t->state != Child_task::RUNNING)
             continue;
 
-        /* Non-blocking check: did the child send its exit IPC? */
-        l4_msgtag_t tag = l4_ipc_receive(
-            t->parent_gate.get().cap(), l4_utcb(),
-            l4_timeout(L4_IPC_TIMEOUT_0, L4_IPC_TIMEOUT_0));
-
-        if (!l4_msgtag_has_error(tag)) {
-            int  nw   = l4_msgtag_words(tag);
-            long code = (nw >= 2) ? (long)mr->mr[1]
-                      : (nw >= 1) ? (long)mr->mr[0] : 0;
-            t->state     = Child_task::EXITED;
-            t->exit_code = code;
-            printf("[spawnd] reaper: [%u] '%s' exited (code=%ld)\n",
-                   t->handle, t->name, code);
-            continue;
-        }
-
-        /* Crash detection: if thread_stats_time fails the thread cap is dead. */
         l4_kernel_clock_t kc = 0;
         l4_msgtag_t r = l4_thread_stats_time(t->thread.get().cap(), &kc);
         if (l4_msgtag_has_error(r)) {
@@ -128,6 +155,13 @@ Child_task *Spawnd::do_spawn(const char *path_str,
                     const_cast<const char *const *>(argv),
                     const_cast<const char *const *>(envp));
 
+        /* Bind parent gate to reaper BEFORE launching the child so the
+         * child's exit l4_ipc_call(parent) is delivered to the reaper.
+         * Label bits[1:0] must be zero per L4 IPC gate spec; shift handle
+         * left by 2 and recover with >> 2 on receipt. */
+        l4_ipc_gate_bind_thread(am.parent_gate_idx(), _reaper_cap,
+                                 (l4_umword_t)h << 2);
+
         typedef Ldr::Elf_loader<Spawn_app_model, Spawn_dbg> My_loader;
         Spawn_dbg dbg;
         My_loader loader;
@@ -137,6 +171,8 @@ Child_task *Spawnd::do_spawn(const char *path_str,
         am.release_caps(&task_idx, &thread_idx, &rm_idx, &gate_idx);
 
         /* 3. Transfer caps and transition slot to RUNNING under lock. */
+        /* 3. Populate caps under lock; preserve EXITED if reaper already
+         *    detected exit during the LOADING phase. */
         pthread_mutex_lock(&_mtx);
         slot->task        = L4Re::Util::Unique_del_cap<L4::Task>(
                                 L4::Cap<L4::Task>(task_idx));
@@ -146,7 +182,8 @@ Child_task *Spawnd::do_spawn(const char *path_str,
                                 L4::Cap<L4Re::Rm>(rm_idx));
         slot->parent_gate = L4Re::Util::Unique_del_cap<L4::Ipc_gate>(
                                 L4::Cap<L4::Ipc_gate>(gate_idx));
-        slot->state       = Child_task::RUNNING;
+        if (slot->state == Child_task::LOADING)
+            slot->state = Child_task::RUNNING;
         pthread_mutex_unlock(&_mtx);
 
         printf("[spawnd] spawned: %s (handle=%u task=%lx)\n",
@@ -170,63 +207,32 @@ Child_task *Spawnd::do_spawn(const char *path_str,
 }
 
 /* ------------------------------------------------------------------ */
-/* do_wait — wait for child exit, detect crashes via timeout           */
+/* do_wait — poll for child exit marked by the reaper IPC loop         */
+/*                                                                     */
+/* The parent gate is bound to the reaper thread (see do_spawn).       */
+/* When the child calls l4_ipc_call(parent_gate), the reaper receives  */
+/* it, marks the slot EXITED, and sends a reply.  do_wait just polls   */
+/* t->state every 10 ms; no IPC receive here keeps the server          */
+/* dispatch thread's KR_REPLY intact for the spawner's reply.          */
 /* ------------------------------------------------------------------ */
 
 long Spawnd::do_wait(Child_task *t)
 {
-    /* Tell reaper to skip gate-receive for this slot. */
     pthread_mutex_lock(&_mtx);
     t->being_waited = true;
     pthread_mutex_unlock(&_mtx);
 
-    long result = -1;
-    l4_msg_regs_t *mr = l4_utcb_mr();
-
+    /* Spin-poll (10 ms sleep) until reaper or reap_once marks EXITED. */
     for (;;) {
-        /* Check if reaper already detected exit/crash between iterations. */
         pthread_mutex_lock(&_mtx);
-        if (t->state == Child_task::EXITED) {
-            result = t->exit_code;
-            pthread_mutex_unlock(&_mtx);
+        if (t->state == Child_task::EXITED)
             break;
-        }
         pthread_mutex_unlock(&_mtx);
-
-        /* Wait up to 200 ms for child's exit IPC. */
-        l4_msgtag_t tag = l4_ipc_receive(
-            t->parent_gate.get().cap(), l4_utcb(),
-            l4_timeout(L4_IPC_TIMEOUT_0, l4_timeout_from_us(200000)));
-
-        if (!l4_msgtag_has_error(tag)) {
-            int nw = l4_msgtag_words(tag);
-            result = (nw >= 2) ? (long)mr->mr[1]
-                   : (nw >= 1) ? (long)mr->mr[0] : 0;
-            break;
-        }
-
-        long err = l4_ipc_error(tag, l4_utcb());
-        if (err != L4_IPC_RETIMEOUT) {
-            fprintf(stderr, "[spawnd] wait: IPC error %ld\n", err);
-            result = -1;
-            break;
-        }
-
-        /* Timeout: check if the child thread is still alive. */
-        l4_kernel_clock_t kc = 0;
-        if (l4_msgtag_has_error(l4_thread_stats_time(t->thread.get().cap(), &kc))) {
-            fprintf(stderr, "[spawnd] wait: [%u] '%s' crashed (thread dead)\n",
-                    t->handle, t->name);
-            result = -1;
-            break;
-        }
-        /* Thread alive — keep waiting. */
+        l4_ipc_sleep(l4_timeout(L4_IPC_TIMEOUT_0, l4_timeout_from_us(10000)));
     }
 
-    pthread_mutex_lock(&_mtx);
+    long result     = t->exit_code;
     t->being_waited = false;
-    t->state        = Child_task::EXITED;
-    t->exit_code    = result;
     pthread_mutex_unlock(&_mtx);
 
     return result;

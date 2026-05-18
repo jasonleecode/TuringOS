@@ -347,15 +347,24 @@ App_model::open_from_ext4(const char *path)
 
 ## 8. 关键技术细节
 
-### 8.1 spawnd 不能调用 `l4_ipc_receive` 等待子进程
+### 8.1 退出 IPC 必须由独立 reaper 线程接收
 
-spawnd 的主循环是 `Registry_server::loop()`，单线程处理 IPC。若在 `op_wait` 内
-调用 `l4_ipc_receive(parent_gate, ...)` 阻塞，整个服务器都无法响应新请求。
+`Registry_server::loop()` 在分发 IPC 时，内核把应答 cap 写入当前线程的 `KR_REPLY` 槽。
+若在 `op_wait` / `op_spawn` 调用栈内调用 `l4_ipc_receive`，会覆盖 `KR_REPLY`，导致
+服务器无法回复最初的客户端，且整个服务器在等待期间无法响应新请求。
 
-解决方案（阶段 2）：
-- `op_wait` 的阻塞版本在 native_shell 侧自己 `l4_ipc_receive`（传 parent_gate cap）
-- 或：spawnd 为每个 wait 请求创建一个 helper 线程（复杂）
-- 阶段 1 简化：只支持同步等待（spawn+wait 原子化），不支持分离的 wait 调用
+**实际采用方案**：spawnd 在构造时创建一个专用 reaper pthread，所有 parent_gate 都绑定到
+这个线程。子进程 `l4_ipc_call(parent)` 由 reaper 线程接收，reaper 标记 `EXITED`，
+然后 `l4_ipc_reply_and_wait` 回复并等下一个。`do_wait` 只做轮询（10 ms sleep），
+完全不碰 IPC，KR_REPLY 槽不受影响。详见 `docs/l4-ipc-exit-ipc.md`。
+
+关键约束（踩坑记录）：
+- gate 绑定（`l4_ipc_gate_bind_thread`）必须在 `loader.launch()` **之前**，否则子进程的
+  exit IPC 会挂起在未绑定的 gate 上，`do_wait` 永远等不到
+- gate label 的低 2 位必须为零（传 `handle << 2`，收到后 `label >> 2`），否则
+  `l4_ipc_gate_bind_thread` 返回 `-L4_EINVAL`
+- 子进程可能在 `do_spawn` 把槽设为 RUNNING 之前就已退出（LOADING 竞争），
+  reaper 和 `do_spawn` 需配合处理：见 §4.2 LOADING 状态保护
 
 ### 8.2 IPC gate 所有权
 
