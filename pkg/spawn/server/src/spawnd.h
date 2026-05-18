@@ -2,28 +2,16 @@
 
 #include <l4/sys/cxx/ipc_epiface>
 #include <spawn_ipc.h>
+#include <pthread.h>
 
 #include "task_table.h"
 #include "app_model.h"
 
-/*
- * Spawnd IPC server object.
- *
- * Phase 1: synchronous foreground exec only.
- *   op_spawn with SPAWN_WAIT launches the program and blocks (in l4_ipc_receive)
- *   until the child exits, then returns the exit code.
- *   op_spawn with SPAWN_BG launches and returns the handle immediately.
- *   op_wait blocks the server loop until the child exits.
- *   op_kill terminates the child immediately.
- *
- * Limitation: because spawnd is single-threaded, a blocking op_wait call
- * (or SPAWN_WAIT) makes the server unavailable to other clients until the
- * child exits.  This is acceptable for Phase 1 (single foreground shell).
- */
 class Spawnd : public L4::Epiface_t<Spawnd, Spawn_svr>
 {
 public:
-    Spawnd() = default;
+    Spawnd();
+    ~Spawnd();
 
     l4_ret_t op_spawn(Spawn_svr::Rights,
                       L4::Ipc::Array_ref<char const> path,
@@ -46,24 +34,33 @@ public:
                           l4_uint32_t &handle);
 
 private:
-    Task_table _table;
+    Task_table      _table;
+    pthread_mutex_t _mtx;
+    pthread_t       _reaper;
+    volatile bool   _stop;
 
     /*
-     * Launch a child process. Returns a non-null Child_task* with caps
-     * owned by _table on success, nullptr on failure.
-     *
-     * path_str: NUL-terminated executable path
-     * argv:     NULL-terminated array of argument strings
+     * Launch a child ELF.  Allocates a LOADING slot, loads the ELF without
+     * holding _mtx, then transitions the slot to RUNNING under _mtx.
+     * Returns the slot on success, nullptr on failure (slot already freed).
      */
     Child_task *do_spawn(const char *path_str,
                          char *const *argv,
                          char *const *envp);
 
-    /* Block on parent_gate until child sends exit signal; return exit code. */
-    static long do_wait(Child_task *t);
+    /*
+     * Wait for a child to exit.  Uses a 200 ms timeout loop so a crash is
+     * detected within one period via l4_thread_stats_time().
+     * Must NOT be called with _mtx held.
+     */
+    long do_wait(Child_task *t);
 
-    /* Unpack a NUL-separated args buffer into a NULL-terminated argv array.
-     * Returns argc. argv must have capacity for at least max_argc+1 entries. */
+    /* Unpack NUL-separated arg buffer into a NULL-terminated argv array. */
     static int unpack_args(const char *buf, size_t len,
                            char **argv, int max_argc);
+
+    /* Scan table for exited/crashed background children. Called with _mtx held. */
+    void reap_once();
+
+    static void *reaper_main(void *arg);
 };

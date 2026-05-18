@@ -23,8 +23,9 @@ struct Child_task {
     L4Re::Util::Unique_del_cap<L4Re::Rm>     rm;
     L4Re::Util::Unique_del_cap<L4::Ipc_gate> parent_gate;
 
-    enum State { FREE = 0, RUNNING, EXITED } state;
+    enum State { FREE = 0, LOADING, RUNNING, EXITED } state;
     long exit_code;
+    bool being_waited;  /* do_wait() owns gate-receive; reaper skips it */
 };
 
 class Task_table {
