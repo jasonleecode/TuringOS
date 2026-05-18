@@ -18,10 +18,14 @@
 | [✓] | i.MX6UL（Cortex-A7）平台适配（QEMU mcimx6ul-evk，CONFIG_CPU_VIRT 已禁用） |
 | [✓] | 终端登录（`login:` / `Password:` 提示，密码显示 `*`，默认 root/12345678） |
 | [✓] | 构建工具链升级：virt/bbb/imx6ul 统一使用 GCC 12（上游要求 GCC 11+） |
+| [✓] | 时区支持：`gmtime()` 改为 `localtime()`，cfg 传 `TZ=CST-8`（POSIX 格式，可按板子改） |
+| [✓] | `top` 命令（htop 风格）：termbox2 TUI，spawnd CPU%，uptime，内存，颜色；`q` 退出 |
 
 
 uvmm
 tvmm
+
+> **run_qemu_virt.sh**：ARM virt 内存已调整为 48M（原 512M），验证最低内存需求。
 
 
 ---
@@ -262,7 +266,7 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | [✓] | TEF6686HN FM 收音机（`radio` 命令，I2C） |
 | [✓] | MCP2515 CAN 控制器（SPI） |
 | [✓] | AT24C02 EEPROM（I2C） |
-| 待做 | htop：实时任务监控（需要 Fiasco 调度统计接口） |
+| [✓] | `top` 命令：termbox2 TUI，800ms 双快照 CPU%，uptime，内存统计，颜色标注（spawnd task_stat IPC + l4_thread_stats_time） |
 
 ### 多核任务调度 [✓]
 
