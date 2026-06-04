@@ -61,7 +61,7 @@ Fiasco.OC (微内核)
     └── L4Re (运行时框架)
          ├── ned (init/loader)          ← 静态配置，无服务监督
          ├── io (设备总线)
-         ├── ext4fs (文件系统服务)       ← 基本读写，mkdir/unlink 缺失
+         ├── ext4fs (文件系统服务)       ← 读写 + mkdir/unlink，cap 生命周期已修；4MiB 上限 / 并发写待解
          ├── rtc / virtio-block / virtio-net / fb-drv (驱动)
          ├── native_shell (交互式 shell) ← 无管道、无脚本、无 PATH
          └── lvgl-demo / wamr / uart-test (应用)
@@ -71,14 +71,14 @@ Fiasco.OC (微内核)
 
 #### 缺口 1：进程生命周期（最关键）
 
-`run` 命令能 spawn 任务，生命周期管理已部分完成：
+`run` 命令能 spawn 任务，生命周期管理已基本完成（仅缺 exec 语义）：
 
 - [✓] **exit/wait**：`wait <handle>` 阻塞直到子任务退出，`_table.free()` 通过 `Unique_del_cap` RAII 销毁 task/thread/rm/gate 全部内核对象，无 cap 泄漏
 - [✓] **kill**：`kill <handle>` 强制销毁子任务所有内核对象并回收 cap slot
-- **孤儿清理**：`do_wait` 阻塞在 `parent_gate` 等子进程主动发消息；若子进程崩溃（未调 `_exit`）则 wait 永久阻塞，资源不回收——需要监控线程或 IRQ 通知机制
-- **无 exec 语义**：不能动态加载新程序并替换当前地址空间
+- [✓] **孤儿清理**：spawnd 专用 reaper pthread，所有 parent_gate 绑到该线程；子进程退出 IPC 在此收取并标记 `EXITED`（唤醒 `do_wait`），500ms 接收超时轮询做崩溃检测，子进程崩溃未调 `_exit` 也能回收资源（commit a6cf922 / 8b7096a）
+- **无 exec 语义**：不能动态加载新程序并替换当前地址空间（待做）
 
-参考方向：孤儿清理可用 Fiasco 的 thread-fault 通知或专用 reaper 线程；exec 语义需在 spawnd 内实现地址空间替换。
+参考方向：exec 语义需在 spawnd 内实现地址空间替换。
 
 #### 缺口 2：管道与 IPC 通道
 
@@ -94,14 +94,14 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 
 | 功能 | 状态 | 影响 |
 |------|------|------|
-| mkdir / unlink | ✗ | 无法创建目录结构 |
+| mkdir / unlink | [✓] | `mkdir` / `rm` 命令经 Ext4_dir_ops 落盘 |
 | 文件大小上限 | 4 MiB 硬限 | 无法处理大文件 |
 | 并发写安全 | ✗ | 多进程写同一文件会数据损坏 |
-| cap 生命周期 | ✗ | Ext4_file_svr 不释放，长期运行 OOM |
+| cap 生命周期 | [✓] | op_release（客户端析构无条件调用）释放 Ext4_file_svr；子 namespace 路径去重缓存（2026-06-04） |
 | tmpfs / ramfs | ✗ | 标准库依赖 /tmp，缺失会导致静默失败 |
 | /proc / /sys | ✗ | 无法查询系统状态 |
 
-**优先级最高**：tmpfs（很多标准库隐式依赖 `/tmp`）和 mkdir/unlink（基本文件操作完整性）。
+**当前优先级**：tmpfs（很多标准库隐式依赖 `/tmp`）、4 MiB 文件上限突破、并发写互斥。
 
 #### 缺口 4：Shell 功能残缺
 
@@ -119,13 +119,10 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 
 #### 缺口 5：日志系统设计缺陷
 
-当前 libklog 是进程内库，存在结构性问题：
+原 libklog 是进程内库，多进程写竞争问题已通过独立 `syslogd` 守护进程解决（各进程经 L4Re IPC 发消息，syslogd 串行写文件，[✓]）。**仍待解**：
 
-- **多进程写竞争**：每个进程独立的 `g_file_seq`，并发 fopen/fclose 无互斥
-- **无日志轮转**：syslog.txt 无限增长，嵌入式环境存储有限
+- **无日志轮转**：syslog.txt 无限增长，嵌入式环境存储有限（按大小轮转 + 保留 N 份）
 - **flush 时机不可控**：lvgl-demo 靠 UI loop 计时，精度差
-
-理想架构：独立 `syslogd` 守护进程，其他进程通过 L4Re IPC 发消息，由 syslogd 统一序列化写文件并处理轮转。
 
 #### 缺口 6：安全模型缺失
 
@@ -144,6 +141,22 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | P0 | **任务调度概率崩溃** | SMP=2 下偶发 `context.cpp:758: !schedule_in_progress` 断言，CPU 进入 JDB 死循环 | `Context::schedule()` 在 `preemption_point()`（sti→cli 窗口）开中断时，硬件 IRQ 触发的调度路径（`switch_to_locked` / `Switch_lock::help`）直接调 `schedule()` 而非 `schedule_if()`，重入断言；已初步修复两处调用点，但其他路径可能仍存在同类问题 |
 | P1 | **cd 命令概率卡死** | 输入 `cd <路径>` 或 Tab 补全后终端无响应 | VFS 层 `Env_dir::check_type` / `cap_to_vfs_object` 对 initial_caps（sigma0 等）发 Meta IPC；sigma0 接收消息但不回复，receive 侧以 `L4_IPC_TIMEOUT_NEVER` 等待，永久阻塞；已改用零发送超时，但 sigma0 恰好处于 receive-wait 状态时仍可能挂起（receive 侧尚未加有限超时） |
 
+**P0 回归门禁（2026-06-04）**：`tools/ci_smp_smoke.sh` 将调度概率崩溃做成 CI 冒烟测试。
+反复无显示启动 `smp-spawn-bench-ci` entry（spawnd 反复 create/destroy + 跨核 IPC 噪声，
+专压 `preemption_point()` 窗口），按串口输出判定 PASS / CRASH / HANG / MISCFG，
+多轮统计失败率，全过才 `exit 0`。用法：
+```bash
+ENTRY=smp-spawn-bench-ci ./build.sh --board virt bootstrap   # 构建 CI 镜像（一次）
+tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
+```
+两个 entry：`smp-spawn-bench`（`-D 30 -s 2`，交互/长压）与 **`smp-spawn-bench-ci`**
+（`-D 8 -s 3`，CI 默认，单轮 ~10s，单位时间样本数约 3×；cfg 见
+`conf/smp-spawn-bench-ci.cfg`）。判据要点（防误报）：bench 自身会打印
+"kernel panic = fix regressed"，故**唯一**通过判据是 `PASS ... without kernel panic`
+行；崩溃签名仅用 `schedule_in_progress` / JDB 进入横幅等专属 token。建议每次动
+调度器 / spawnd / `Switch_lock` 后跑一轮，并定期 `-n 50+` 测长期崩溃率（概率缺陷，
+单次通过不证明已修复）。
+
 ---
 
 ## P1 — 核心系统服务
@@ -158,8 +171,8 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | [✓] | L4Re Namespace 服务器 — POSIX 只读访问（cat /ext4/file） |
 | [✓] | 写支持 — `echo > /ext4/file`、`cat` 读回（共享 Dataspace + op_close 回写） |
 | [✓] | 目录列举 — `ls /ext4` 及子目录递归（`.dirinfo` DS 机制） |
-| 待做 | `mkdir` / `unlink` 支持 |
-| 待做 | cap 生命周期管理：`Ext4_file_svr` / 子 namespace 注册后不自动释放，长期运行会耗尽 cap slot |
+| [✓] | `mkdir` / `unlink` 支持（`mkdir` / `rm` 命令 → Ext4_dir_ops `ext_mkdir` / `ext_unlink`） |
+| [✓] | cap 生命周期管理（2026-06-04）：每次 open 的 `Ext4_file_svr` 由客户端析构无条件发 `op_release` → 服务器 `unregister_obj` + 自删除（读写都回收，含从不调 op_close 的只读 `cat`）；子 `Ext4_namespace` 改为按路径去重缓存（无状态路由器，安全复用），把每次查询泄漏降为每个不同目录一份。QEMU 验证：8× release、写回完整性、6× 重复 cat 无崩溃、子目录 4× ls 缓存命中正常。同时修复 `op_close(0)` 会截断文件的潜在 footgun（改为跳过 flush）|
 | 待做 | 写并发互斥：同一文件多个 op_query 产生多个 svr，末次 op_close 覆盖前面写入 |
 | 待做 | 文件大小突破 4 MiB 限制（FILE_DS_MAX，考虑分段 DS 或流式写入） |
 | 待做 | tmpfs / ramfs（挂载到 /tmp，无需磁盘） |
