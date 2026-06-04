@@ -27,9 +27,18 @@ struct Ext4_file_ops
      L4::Ipc::Snd_fpage &snd_ds,       // server-side: DS cap to send
      l4_uint64_t &size));              // out: original file size
 
-  // Flush first `written` bytes of the shared DS back to disk and close.
-  // Pass written=0 to skip flush (read-only access).
+  // Flush first `written` bytes of the shared DS back to disk.  This commits
+  // pending writes (fsync / dirty fclose) but does NOT destroy the server
+  // object — the file may stay open for further writes.  Pass written=0 to
+  // skip the flush entirely (no truncation).
   L4_INLINE_RPC(long, close, (l4_uint64_t written));
+
+  // Release the per-open server object: the client is done with this file
+  // handle (last fd closed).  The server unregisters and frees the object,
+  // its DS cap, and its IPC gate.  Called unconditionally from the client's
+  // destructor so that *read-only* opens are reclaimed too (they never call
+  // close).  After release the cap is dead; do not reuse it.
+  L4_INLINE_RPC(long, release, (void));
 
   // Convenience wrapper: call get_ds and receive DS into `ds_slot`.
   long get_ds(L4::Cap<L4Re::Dataspace> ds_slot, l4_uint64_t &size) const noexcept
@@ -38,7 +47,7 @@ struct Ext4_file_ops
     return get_ds_t::call(c(), L4::Ipc::Small_buf(ds_slot), snd, size);
   }
 
-  typedef L4::Typeid::Rpcs<get_ds_t, close_t> Rpcs;
+  typedef L4::Typeid::Rpcs<get_ds_t, close_t, release_t> Rpcs;
 };
 
 // Directory-mutation protocol on the root Ext4_namespace cap.

@@ -59,6 +59,14 @@ Ext4_file_vfs::~Ext4_file_vfs() noexcept
   // _ds unique_cap frees the slot.
   // Note: we do NOT call op_close here — it was already called by
   // unlock_all_locks() which fclose() invokes before the destructor.
+
+  // Tell the server this handle is gone so it can free the per-open
+  // Ext4_file_svr (object + IPC gate + DS cap).  This runs for *every* open,
+  // including read-only ones that never trigger op_close — without it the
+  // server leaks a cap slot per open and a long-running system exhausts caps.
+  // Best-effort: ignore the result, the cap is about to be dropped anyway.
+  if (_cap.is_valid())
+    _cap->release();
 }
 
 int Ext4_file_vfs::unlock_all_locks() noexcept

@@ -58,6 +58,10 @@ public:
     _prefix[n] = '\0';
   }
 
+  // Absolute ext4 path this namespace is rooted at (used by the sub-namespace
+  // dedup cache in op_query).
+  const char *prefix() const { return _prefix; }
+
   // ----- L4Re::Namespace ops -----
 
   l4_ret_t op_query(L4Re::Namespace::Rights,

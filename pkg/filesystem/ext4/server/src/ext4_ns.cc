@@ -41,6 +41,46 @@ extern "C" {
 static inline size_t round_page(size_t v)
 { return (v + 4095UL) & ~4095UL; }
 
+// --- Sub-namespace dedup cache --------------------------------------------
+//
+// A directory query (`ls`/`cd /ext4/sub`) used to `new` a fresh Ext4_namespace
+// + register a new cap on *every* call, none ever freed → unbounded cap-slot
+// growth on a long-running system.  Sub-namespaces are stateless routers (they
+// only hold a path prefix), so we cache one object per distinct directory path
+// and re-hand-out its existing cap.  This bounds the count to the number of
+// directories actually traversed (finite), with no staleness risk.
+//
+// The ext4fs server is single-threaded, so an unsynchronised file-scoped list
+// is safe.  Cache nodes are themselves bounded to #distinct directories.
+namespace {
+
+struct Subns_node
+{
+  Ext4_namespace *ns;
+  Subns_node     *next;
+};
+
+static Subns_node *s_subns_cache = nullptr;
+
+static Ext4_namespace *find_cached_subns(const char *path)
+{
+  for (Subns_node *n = s_subns_cache; n; n = n->next)
+    if (strcmp(n->ns->prefix(), path) == 0)
+      return n->ns;
+  return nullptr;
+}
+
+static void cache_subns(Ext4_namespace *ns)
+{
+  auto *n = new(std::nothrow) Subns_node;
+  if (!n) return;   // OOM here is harmless: next query just re-creates the sub-ns
+  n->ns   = ns;
+  n->next = s_subns_cache;
+  s_subns_cache = n;
+}
+
+} // namespace
+
 // Build a ".dirinfo" Dataspace for `dir_path` (absolute lwext4 path, e.g. "/" or "/subdir").
 // The DS contains lines of the form  "<name-length>:<name>\n".
 // Returns L4_EOK and sets snd_cap on success.
@@ -247,20 +287,29 @@ Ext4_namespace::op_query(L4Re::Namespace::Rights,
 
   // ---- Check if path is a directory ---------------------------------------
   // Return a child Ext4_namespace rooted at `path` so opendir() and ls work.
+  // Reuse a cached sub-namespace for this path if one exists (dedup) so that
+  // repeated `ls`/`cd` don't leak a server object + cap per call.
   ext4_dir probe;
   if (ext4_dir_open(&probe, path) == EOK)
     {
       ext4_dir_close(&probe);
 
-      auto *sub_ns = new(std::nothrow) Ext4_namespace(_registry, path);
-      if (!sub_ns)
-        return -L4_ENOMEM;
-
-      L4::Cap<void> sub_cap = _registry->register_obj(sub_ns);
-      if (!sub_cap.is_valid())
+      L4::Cap<void> sub_cap;
+      if (Ext4_namespace *cached = find_cached_subns(path))
+        sub_cap = cached->obj_cap();
+      else
         {
-          delete sub_ns;
-          return -L4_ENOMEM;
+          auto *sub_ns = new(std::nothrow) Ext4_namespace(_registry, path);
+          if (!sub_ns)
+            return -L4_ENOMEM;
+
+          sub_cap = _registry->register_obj(sub_ns);
+          if (!sub_cap.is_valid())
+            {
+              delete sub_ns;
+              return -L4_ENOMEM;
+            }
+          cache_subns(sub_ns);
         }
 
       snd_cap = L4::Ipc::Snd_fpage(sub_cap, L4_CAP_FPAGE_RWS);
@@ -280,7 +329,9 @@ Ext4_namespace::op_query(L4Re::Namespace::Rights,
     }
 
   // ---- Regular file -------------------------------------------------------
-  auto *file_svr = new(std::nothrow) Ext4_file_svr(path);
+  // One Ext4_file_svr per open; reclaimed when the client calls op_release
+  // (from its VFS destructor).  Pass the registry so it can unregister itself.
+  auto *file_svr = new(std::nothrow) Ext4_file_svr(_registry, path);
   if (!file_svr)
     return -L4_ENOMEM;
 

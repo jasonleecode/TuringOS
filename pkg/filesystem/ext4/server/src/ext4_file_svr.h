@@ -7,19 +7,23 @@
 
 #include <l4/sys/cxx/ipc_epiface>
 #include <l4/re/util/unique_cap>
+#include <l4/re/util/object_registry>
 #include <l4/re/dataspace>
 #include "../../include/ext4_file_proto.h"
 
 // One Ext4_file_svr is created per op_query call in the Namespace server.
 // It allocates a shared R/W Dataspace for the file content.
-// On op_close the DS content is written back to the ext4 filesystem.
+// On op_close the DS content is written back to the ext4 filesystem; on
+// op_release the object unregisters itself and is deleted (reclaiming the
+// IPC gate + DS cap slots) so long-running clients don't exhaust caps.
 class Ext4_file_svr
 : public L4::Epiface_t<Ext4_file_svr, Ext4_file_ops>
 {
 public:
   // Allocate DS and (if the file exists) fill it from ext4.
   // path must be an absolute lwext4 path, e.g. "/hello.txt".
-  explicit Ext4_file_svr(const char *path);
+  // `registry` is used by op_release to unregister this object.
+  Ext4_file_svr(L4Re::Util::Object_registry *registry, const char *path);
 
   ~Ext4_file_svr();
 
@@ -29,7 +33,10 @@ public:
 
   l4_ret_t op_close(Ext4_file_ops::Rights, l4_uint64_t written);
 
+  l4_ret_t op_release(Ext4_file_ops::Rights);
+
 private:
+  L4Re::Util::Object_registry *_registry;
   char     _path[258];
   L4Re::Util::Unique_cap<L4Re::Dataspace> _ds;
   l4_addr_t    _ds_addr = 0;

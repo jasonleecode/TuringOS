@@ -25,7 +25,9 @@ static const unsigned long FILE_DS_MAX = 4u << 20;
 static inline unsigned long round_up(unsigned long v, unsigned long align)
 { return (v + align - 1) & ~(align - 1); }
 
-Ext4_file_svr::Ext4_file_svr(const char *path)
+Ext4_file_svr::Ext4_file_svr(L4Re::Util::Object_registry *registry,
+                             const char *path)
+: _registry(registry)
 {
   strncpy(_path, path, sizeof(_path) - 1);
   _path[sizeof(_path) - 1] = '\0';
@@ -118,9 +120,15 @@ Ext4_file_svr::op_close(Ext4_file_ops::Rights, l4_uint64_t written)
   if (!_ok || !_ds_addr)
     return L4_EOK;
 
+  // written == 0 means "commit nothing" (e.g. read-only handle, or fsync with
+  // no dirty bytes).  Do NOT open "wb" here — that would truncate the file to
+  // empty.  Just skip the flush.  This commit may run multiple times over the
+  // handle's life (fsync + final fclose), so it must not destroy the object;
+  // teardown happens in op_release.
+  if (written == 0)
+    return L4_EOK;
+
   // "wb" truncates before writing — correct for both overwrite and new files.
-  // written == 0 means the file was opened with O_TRUNC but nothing was written
-  // (e.g. `> file` with no data); we still open+close to truncate on disk.
   ext4_file f;
   if (ext4_fopen(&f, _path, "wb") != EOK)
     {
@@ -128,32 +136,45 @@ Ext4_file_svr::op_close(Ext4_file_ops::Rights, l4_uint64_t written)
       return -L4_EIO;
     }
 
+  unsigned long to_write =
+    (written <= _ds_size) ? (unsigned long)written : _ds_size;
   size_t wr = 0;
-  if (written > 0)
+  int re = ext4_fwrite(&f, reinterpret_cast<void *>(_ds_addr), to_write, &wr);
+  ext4_fclose(&f);
+  if (re != EOK || wr != to_write)
     {
-      unsigned long to_write =
-        (written <= _ds_size) ? (unsigned long)written : _ds_size;
-      int re = ext4_fwrite(&f, reinterpret_cast<void *>(_ds_addr), to_write, &wr);
-      ext4_fclose(&f);
-      if (re != EOK || wr != to_write)
-        {
-          printf("[ext4svr] op_close: write '%s' failed (r=%d wr=%zu)\n",
-                 _path, re, wr);
-          return -L4_EIO;
-        }
+      printf("[ext4svr] op_close: write '%s' failed (r=%d wr=%zu)\n",
+             _path, re, wr);
+      return -L4_EIO;
     }
-  else
-    ext4_fclose(&f);
 
   printf("[ext4svr] op_close: wrote %zu bytes → '%s'\n", wr, _path);
+  return L4_EOK;
+}
 
-  // Free DS mapping from server's address space on close.
-  // The client still holds its DS cap; the kernel object stays alive.
-  if (_ds_addr) {
-    L4Re::Env::env()->rm()->detach(_ds_addr, nullptr);
-    _ds_addr = 0;
-  }
+l4_ret_t
+Ext4_file_svr::op_release(Ext4_file_ops::Rights)
+{
+  // Client is done with this handle.  Detach our local DS mapping, unregister
+  // from the server (frees the IPC gate + internally-allocated cap slot and
+  // routes any in-flight senders to the null handler), then self-destruct.
+  //
+  // Self-deletion is safe inside this handler: the server loop's reply for the
+  // current RPC is sent from the UTCB at the top of the *next* loop iteration
+  // (Server::internal_loop), and release returns only a status word, so the
+  // dispatcher never dereferences this object after we return.  The ~dtor
+  // detaches the mapping and frees the DS cap via Unique_cap.
+  if (_ds_addr)
+    {
+      L4Re::Env::env()->rm()->detach(_ds_addr, nullptr);
+      _ds_addr = 0;
+    }
   _ok = false;
 
+  if (_registry)
+    _registry->unregister_obj(this);
+
+  printf("[ext4svr] op_release: freed handle for '%s'\n", _path);
+  delete this;
   return L4_EOK;
 }
