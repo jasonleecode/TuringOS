@@ -61,7 +61,7 @@ Fiasco.OC (微内核)
     └── L4Re (运行时框架)
          ├── ned (init/loader)          ← 静态配置，无服务监督
          ├── io (设备总线)
-         ├── ext4fs (文件系统服务)       ← 流式读写（任意大小）+ mkdir/unlink + cap 生命周期；O_APPEND 单写者
+         ├── ext4fs (文件系统服务)       ← 流式读写（任意大小）+ mkdir/unlink + cap 生命周期 + 原子 O_APPEND
          ├── rtc / virtio-block / virtio-net / fb-drv (驱动)
          ├── native_shell (交互式 shell) ← 无管道、无脚本、无 PATH
          └── lvgl-demo / wamr / uart-test (应用)
@@ -96,12 +96,12 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 |------|------|------|
 | mkdir / unlink | [✓] | `mkdir` / `rm` 命令经 Ext4_dir_ops 落盘 |
 | 文件大小上限 | [✓] | 流式 offset I/O，无上限（QEMU 验证 6MiB 拷贝字节一致） |
-| 并发写安全 | [✓] | 写穿透 + 服务器串行化，无整文件覆盖丢更新（O_APPEND 多写者非原子，待办） |
+| 并发写安全 | [✓] | 写穿透 + 服务器串行化无丢更新；O_APPEND 服务器端原子追加（`pappend` RPC：seek EOF+write 单 RPC 内完成，并发追加不互相覆盖；shell `>>` 已支持，tmpfs 同步支持） |
 | cap 生命周期 | [✓] | op_release（客户端析构无条件调用）释放 Ext4_file_svr；子 namespace 路径去重缓存（2026-06-04） |
 | tmpfs / ramfs | [✓] | 进程内 RAM /tmp（pkg/tmpfs，链入 native_shell；inode/handle 分离，open/读写/mkdir/unlink/readdir 全通） |
 | /proc / /sys | ✗ | 无法查询系统状态 |
 
-**当前优先级**：ext4 O_APPEND 服务器端原子追加；tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）。
+**当前优先级**：tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）；其后转向真机点亮 + 裸机 cyclictest（RT/工业方向的闸门）。
 
 #### 缺口 4：Shell 功能残缺
 

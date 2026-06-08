@@ -137,6 +137,36 @@ Ext4_file_svr::op_pwrite(Ext4_file_ops::Rights,
 }
 
 l4_ret_t
+Ext4_file_svr::op_pappend(Ext4_file_ops::Rights,
+                          l4_uint32_t len, l4_uint32_t &put, l4_uint64_t &off)
+{
+  put = 0;
+  off = 0;
+  if (!_ok || !_buf_addr) return -L4_ENOMEM;
+  if (!ensure_open())     return -L4_EIO;
+  if (len > BUF_SIZE)     len = BUF_SIZE;
+
+  // Seek to EOF and capture that offset, then write — all within this one
+  // synchronous RPC, which the single-threaded server runs to completion
+  // before serving the next.  So two concurrent O_APPEND writers each land at
+  // the then-current EOF and neither clobbers the other.
+  if (ext4_fseek(&_f, 0, SEEK_END) != EOK)
+    return -L4_EIO;
+  off = ext4_fsize(&_f);
+
+  size_t wc = 0;
+  int re = ext4_fwrite(&_f, reinterpret_cast<void *>(_buf_addr), len, &wc);
+  if (re != EOK || wc != len)
+    {
+      printf("[ext4svr] pappend '%s' len=%u failed: re=%d wc=%zu\n",
+             _path, len, re, wc);
+      return -L4_EIO;
+    }
+  put = (l4_uint32_t)wc;
+  return L4_EOK;
+}
+
+l4_ret_t
 Ext4_file_svr::op_ftruncate(Ext4_file_ops::Rights, l4_uint64_t size)
 {
   if (!_ok)           return -L4_ENOMEM;

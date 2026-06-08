@@ -43,6 +43,9 @@ public:
   l4_ret_t op_pwrite(Ext4_file_ops::Rights,
                      l4_uint64_t off, l4_uint32_t len, l4_uint32_t &put);
 
+  l4_ret_t op_pappend(Ext4_file_ops::Rights,
+                      l4_uint32_t len, l4_uint32_t &put, l4_uint64_t &off);
+
   l4_ret_t op_ftruncate(Ext4_file_ops::Rights, l4_uint64_t size);
 
   l4_ret_t op_release(Ext4_file_ops::Rights);

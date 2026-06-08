@@ -49,6 +49,14 @@ struct Ext4_file_ops
   L4_INLINE_RPC(long, pwrite,
     (l4_uint64_t off, l4_uint32_t len, l4_uint32_t &put));
 
+  // Atomic append (O_APPEND): seek to the current end of file and write `len`
+  // bytes from the bounce buffer there.  Returns `put` = bytes written and
+  // `off` = the offset the data landed at (EOF at write time).  The single-
+  // threaded server serialises this, so concurrent appenders never overwrite
+  // each other — unlike a client computing the offset from a cached size.
+  L4_INLINE_RPC(long, pappend,
+    (l4_uint32_t len, l4_uint32_t &put, l4_uint64_t &off));
+
   // Truncate the file to `size` bytes.
   L4_INLINE_RPC(long, ftruncate, (l4_uint64_t size));
 
@@ -67,7 +75,11 @@ struct Ext4_file_ops
     return setup_t::call(c(), L4::Ipc::Small_buf(buf_slot), snd, size, buf_size);
   }
 
-  typedef L4::Typeid::Rpcs<setup_t, pread_t, pwrite_t, ftruncate_t, release_t> Rpcs;
+  // Opcode order = list order.  Keep pappend_t LAST so adding it doesn't shift
+  // the opcodes of existing RPCs (spawnd uses release_t and need not rebuild
+  // in lockstep).
+  typedef L4::Typeid::Rpcs<setup_t, pread_t, pwrite_t,
+                           ftruncate_t, release_t, pappend_t> Rpcs;
 };
 
 // Directory-mutation protocol on the root Ext4_namespace cap.

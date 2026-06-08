@@ -110,8 +110,8 @@ private:
 class Tmpfs_file : public Be_file_pos
 {
 public:
-  explicit Tmpfs_file(Ref_ptr<Tmpfs_inode> const &ino) noexcept
-  : Be_file_pos(), _ino(ino) {}
+  Tmpfs_file(Ref_ptr<Tmpfs_inode> const &ino, bool append) noexcept
+  : Be_file_pos(), _ino(ino), _append(append) {}
 
   off64_t size() const noexcept override { return (off64_t)_ino->size(); }
 
@@ -131,6 +131,7 @@ public:
 
   ssize_t pwritev(const struct iovec *iov, int cnt, off64_t off) noexcept override
   {
+    if (_append) off = (off64_t)_ino->size();   // O_APPEND: write at EOF
     ssize_t total = 0;
     for (int i = 0; i < cnt; ++i)
       {
@@ -162,6 +163,7 @@ public:
 
 private:
   Ref_ptr<Tmpfs_inode> _ino;
+  bool                  _append = false;
 };
 
 // ---------------------------------------------------------------------------
@@ -193,11 +195,13 @@ public:
         return e->sub->get_entry(rest, flags, 0, f);
       }
 
+    bool append = (flags & O_APPEND) != 0;
+
     if (e)                                         // leaf exists
       {
         if (e->sub) { *f = e->sub; return 0; }
         if (flags & O_TRUNC) e->ino->truncate(0);
-        *f = cxx::make_ref_obj<Tmpfs_file>(e->ino);  // fresh handle, own pos
+        *f = cxx::make_ref_obj<Tmpfs_file>(e->ino, append); // fresh handle
         return *f ? 0 : -ENOMEM;
       }
 
@@ -205,7 +209,7 @@ public:
 
     Ref_ptr<Tmpfs_inode> ino = cxx::make_ref_obj<Tmpfs_inode>();
     if (!ino || !add_file(name, n, ino)) return -ENOMEM;
-    *f = cxx::make_ref_obj<Tmpfs_file>(ino);
+    *f = cxx::make_ref_obj<Tmpfs_file>(ino, append);
     return *f ? 0 : -ENOMEM;
   }
 

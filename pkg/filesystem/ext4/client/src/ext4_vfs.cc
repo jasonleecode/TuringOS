@@ -109,8 +109,7 @@ ssize_t Ext4_file_vfs::pwritev(const struct iovec *iov, int cnt,
   if (!_valid || !_buf_addr) return -EIO;
 
   ssize_t total = 0;
-  // O_APPEND: every write goes to the current end of file.
-  off64_t pos = _append ? (off64_t)_size : offset;
+  off64_t pos = offset;
 
   for (int i = 0; i < cnt; ++i)
     {
@@ -124,16 +123,30 @@ ssize_t Ext4_file_vfs::pwritev(const struct iovec *iov, int cnt,
           memcpy(reinterpret_cast<void *>(_buf_addr), src, chunk);
 
           l4_uint32_t put = 0;
-          long r = _cap->pwrite((l4_uint64_t)pos, chunk, put);
+          long r;
+          if (_append)
+            {
+              // Atomic server-side append: the offset is chosen by the server
+              // at EOF, so concurrent appenders never overwrite each other.
+              l4_uint64_t at = 0;
+              r = _cap->pappend(chunk, put, at);
+              if (r >= 0 && put > 0)
+                pos = (off64_t)(at + put);   // fd advances past the appended data
+            }
+          else
+            {
+              r = _cap->pwrite((l4_uint64_t)pos, chunk, put);
+              if (r >= 0 && put > 0)
+                pos += (off64_t)put;
+            }
           if (r < 0 || put == 0)
             return total ? total : -EIO;
 
-          src    += put;
-          remain -= put;
-          pos    += (off64_t)put;
-          total  += (ssize_t)put;
           if ((l4_uint64_t)pos > _size)
             _size = (l4_uint64_t)pos;
+          src    += put;
+          remain -= put;
+          total  += (ssize_t)put;
 
           if (put < chunk)
             return total;                 // partial write

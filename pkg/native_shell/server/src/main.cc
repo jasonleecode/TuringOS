@@ -333,13 +333,16 @@ int main(int argc, char const* const* argv)
             continue;
         }
 
-        // Detect '&' (background) and '>' (redirection), strip both from argv
+        // Detect '&' (background) and '>' / '>>' (redirection), strip from argv
         const char *redir_path = nullptr;
+        bool redir_append = false;
         bool background = false;
         int new_argc = 0;
         for (int i = 0; i < cmd_argc; i++) {
-            if (strcmp(cmd_argv[i], ">") == 0 && i + 1 < cmd_argc) {
-                redir_path = cmd_argv[i + 1];
+            if ((strcmp(cmd_argv[i], ">") == 0 || strcmp(cmd_argv[i], ">>") == 0)
+                && i + 1 < cmd_argc) {
+                redir_path   = cmd_argv[i + 1];
+                redir_append = (cmd_argv[i][1] == '>');   // ">>" => append
                 i++;
             } else if (strcmp(cmd_argv[i], "&") == 0) {
                 background = true;
@@ -357,7 +360,9 @@ int main(int argc, char const* const* argv)
         if (redir_path) {
             fflush(stdout);
             saved_stdout = dup(STDOUT_FILENO);
-            redir_fd = open(redir_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+            int oflags = O_WRONLY | O_CREAT
+                       | (redir_append ? O_APPEND : O_TRUNC);
+            redir_fd = open(redir_path, oflags, 0644);
             if (redir_fd < 0) {
                 printf("shell: cannot open '%s' for writing\n", redir_path);
                 redir_path = nullptr;
