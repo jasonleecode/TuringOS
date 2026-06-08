@@ -139,7 +139,6 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | 优先级 | 问题 | 现象 | 怀疑点 |
 |--------|------|------|------|
 | P0 | **任务调度概率崩溃** | SMP=2 下偶发 `context.cpp:758: !schedule_in_progress` 断言，CPU 进入 JDB 死循环 | `Context::schedule()` 在 `preemption_point()`（sti→cli 窗口）开中断时，硬件 IRQ 触发的调度路径（`switch_to_locked` / `Switch_lock::help`）直接调 `schedule()` 而非 `schedule_if()`，重入断言；已初步修复两处调用点，但其他路径可能仍存在同类问题 |
-| P1 | **cd 命令概率卡死** | 输入 `cd <路径>` 或 Tab 补全后终端无响应 | VFS 层 `Env_dir::check_type` / `cap_to_vfs_object` 对 initial_caps（sigma0 等）发 Meta IPC；sigma0 接收消息但不回复，receive 侧以 `L4_IPC_TIMEOUT_NEVER` 等待，永久阻塞；已改用零发送超时，但 sigma0 恰好处于 receive-wait 状态时仍可能挂起（receive 侧尚未加有限超时） |
 
 **P0 回归门禁（2026-06-04）**：`tools/ci_smp_smoke.sh` 将调度概率崩溃做成 CI 冒烟测试。
 反复无显示启动 `smp-spawn-bench-ci` entry（spawnd 反复 create/destroy + 跨核 IPC 噪声，
@@ -156,6 +155,14 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 行；崩溃签名仅用 `schedule_in_progress` / JDB 进入横幅等专属 token。建议每次动
 调度器 / spawnd / `Switch_lock` 后跑一轮，并定期 `-n 50+` 测长期崩溃率（概率缺陷，
 单次通过不证明已修复）。
+
+**P1 cd 概率卡死 — 已修复（2026-06-08）**：根因是 VFS 层 `meta_probe` / `Env_dir::check_type`
+（`l4re/l4re_vfs/include/impl/ns_fs_impl.h`）对 initial_caps 发 Meta IPC 时，*发送*超时虽
+已为 0（peer 未在 receive-wait 则快速失败），但*接收*侧仍用 `L4_IPC_TIMEOUT_NEVER`——
+当 sigma0 恰好处于 receive-wait、收下消息却不回复时，接收永久阻塞，挂死 `cd` / Tab 补全。
+修复：接收侧改为有限超时（50ms，远高于 cyclictest 实测 ~3ms 最坏往返，不会误判响应正常
+的 namespace 服务器）。QEMU 验证：6× `cd /ext4` + `ls` + `cd /` 循环全部成功、shell 存活
+标记打印、无崩溃无挂起。属概率缺陷，单次通过不构成 before/after 复现，但逻辑根因已消除。
 
 ---
 
