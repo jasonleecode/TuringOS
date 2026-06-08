@@ -47,6 +47,10 @@ int main(int argc, char const *const *argv)
         return 1;
     }
 
+    /* Forward this cap to every spawned child as "spawnd" so children can call
+     * back (exec()).  Same gate the shell uses; invoking it reaches our loop. */
+    Spawn_model_base::s_spawnd_cap = svr_cap.cap();
+
     printf("[spawnd] ready\n");
     server.loop();
     return 0;

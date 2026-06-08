@@ -326,6 +326,8 @@ void Spawn_model_base::get_task_caps(L4::Cap<L4::Factory> *factory,
   *thread  = _child_thread_cap.get();
 }
 
+l4_cap_idx_t Spawn_model_base::s_spawnd_cap = L4_INVALID_CAP;
+
 l4_cap_idx_t Spawn_model_base::push_initial_caps(l4_cap_idx_t start)
 {
   l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
@@ -335,6 +337,18 @@ l4_cap_idx_t Spawn_model_base::push_initial_caps(l4_cap_idx_t start)
     child_e.cap   = start;
     child_e.flags = 0;
     memcpy(child_e.name, e->name, sizeof(e->name));
+    _stack.push(child_e);
+    start += L4_CAP_OFFSET;
+  }
+  /* Append spawnd's own service cap as "spawnd" so the child can exec().
+   * Must stay in lock-step with map_initial_caps (same iteration + same
+   * trailing entry => same index). */
+  if (l4_is_valid_cap(s_spawnd_cap)) {
+    l4re_env_cap_entry_t child_e;
+    child_e.cap   = start;
+    child_e.flags = 0;
+    memset(child_e.name, 0, sizeof(child_e.name));
+    memcpy(child_e.name, "spawnd", 6);
     _stack.push(child_e);
     start += L4_CAP_OFFSET;
   }
@@ -348,6 +362,14 @@ void Spawn_model_base::map_initial_caps(L4::Cap<L4::Task> task, l4_cap_idx_t sta
     if (!l4_is_valid_cap(e->cap)) continue;
     task->map(L4Re::This_task,
               L4::Cap<void>(e->cap).fpage(L4_CAP_FPAGE_RWS),
+              L4::Cap<void>(start).snd_base());
+    start += L4_CAP_OFFSET;
+  }
+  /* Map spawnd's own service cap at the same trailing index push_initial_caps
+   * reserved for the "spawnd" entry. */
+  if (l4_is_valid_cap(s_spawnd_cap)) {
+    task->map(L4Re::This_task,
+              L4::Cap<void>(s_spawnd_cap).fpage(L4_CAP_FPAGE_RWS),
               L4::Cap<void>(start).snd_base());
     start += L4_CAP_OFFSET;
   }

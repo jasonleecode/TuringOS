@@ -67,6 +67,11 @@ struct Spawn_model_base : public Ldr::Base_app_model<Spawn_stack>
 
   enum { Utcb_area_start = 0xb3000000UL };
 
+  // spawnd's own service cap, forwarded to every child as the named cap
+  // "spawnd" so children can call back to spawnd (e.g. exec()).  Set once at
+  // spawnd startup (main.cc); L4_INVALID_CAP disables forwarding.
+  static l4_cap_idx_t s_spawnd_cap;
+
   Spawn_model_base();
 
   // Set the argv/envp that will be pushed onto the child's startup stack.

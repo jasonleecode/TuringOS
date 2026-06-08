@@ -21,10 +21,6 @@
 | [✓] | 时区支持：`gmtime()` 改为 `localtime()`，cfg 传 `TZ=CST-8`（POSIX 格式，可按板子改） |
 | [✓] | `top` 命令（htop 风格）：termbox2 TUI，spawnd CPU%，uptime，内存，颜色；`q` 退出 |
 
-
-uvmm
-tvmm
-
 > **run_qemu_virt.sh**：ARM virt 内存已调整为 48M（原 512M），验证最低内存需求。
 
 
@@ -43,7 +39,7 @@ tvmm
 | l4mk | kernkonzept/mk | +51 | 19（启动配置） |
 
 **注**：上游 Fiasco r-2026-W17 包含 ARM generic timer one-shot 修复，缓解了
-SMP 双核下 `schedule_in_progress` 断言偶发崩溃（context.cpp:755）。该根因为
+SMP 双核下 `schedule_in_progress` 断言偶发崩溃（context.cpp:758）。该根因为
 Fiasco 已知设计缺陷，上游暂无直接补丁。
 
 **后续**：建立定期同步机制（建议每月跟一次上游 tag）。
@@ -69,16 +65,27 @@ Fiasco.OC (微内核)
 
 ### 六大核心缺口
 
+> **进度小结（2026-06-08 复盘）**：缺口 1（进程生命周期，exec 已补齐，**完整闭合**）、缺口 3（文件系统，仅缺 /proc /sys）、
+> 缺口 5（日志，仅缺轮转）已**闭合 / 基本闭合**。仍**敞着的结构性缺口**是 **2（管道/IPC 通道）**、
+> **4（Shell 仍是命令分发器）**、**6（安全模型：密码硬编码 + `run` 全量转发 cap 含 sigma0 + 无隔离）**。
+> 另有跨越所有方向的 **P0 调度概率崩溃**——目前只缓解 + CI 门禁守着，根因（Fiasco 已知设计缺陷）未除，
+> 是任何实时/工业方向的硬闸门。
+
 #### 缺口 1：进程生命周期（最关键）
 
-`run` 命令能 spawn 任务，生命周期管理已基本完成（仅缺 exec 语义）：
+`run` 命令能 spawn 任务，生命周期管理**已完成**：
 
 - [✓] **exit/wait**：`wait <handle>` 阻塞直到子任务退出，`_table.free()` 通过 `Unique_del_cap` RAII 销毁 task/thread/rm/gate 全部内核对象，无 cap 泄漏
 - [✓] **kill**：`kill <handle>` 强制销毁子任务所有内核对象并回收 cap slot
 - [✓] **孤儿清理**：spawnd 专用 reaper pthread，所有 parent_gate 绑到该线程；子进程退出 IPC 在此收取并标记 `EXITED`（唤醒 `do_wait`），500ms 接收超时轮询做崩溃检测，子进程崩溃未调 `_exit` 也能回收资源（commit a6cf922 / 8b7096a）
-- **无 exec 语义**：不能动态加载新程序并替换当前地址空间（待做）
-
-参考方向：exec 语义需在 spawnd 内实现地址空间替换。
+- [✓] **exec 语义（2026-06-08）**：`Spawn_svr::exec(handle,path,args)` —— 子进程经转发的 `spawnd` cap
+  回调（自身 handle 从 env `SPAWND_HANDLE` 得），spawnd 用新 ELF 起新 task 装回**同一 slot/handle**、
+  销毁旧 task（调用者 thread 随之消失，返回 `-L4_ENOREPLY` 不回复）。handle 不变 → 父 `wait`/`kill` 透明。
+  这是本系统进程模型下的 exec 语义（底层 L4 task 身份变，但 handle 才是用户可见的"PID"）。
+  QEMU 验证：`run exectest &` → 打 `before exec (handle=1)`，随即 spawnd `exec: handle=1 now runs rom/hello`，
+  之后持续 `Hello World!`（同一 handle 运行新程序），无崩溃。`pkg/exectest` 为演示/自测程序。
+  **后续**：透明 libc `execve()`/`execvp()` shim（让任意 POSIX 程序的 exec() 自动走此机制）；
+  转发 spawnd 自身 cap 给子进程，与 [[缺口 6]] all-cap 转发问题相关，细化 cap 策略时一并收。
 
 #### 缺口 2：管道与 IPC 通道
 
@@ -180,10 +187,11 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 | [✓] | 目录列举 — `ls /ext4` 及子目录递归（`.dirinfo` DS 机制） |
 | [✓] | `mkdir` / `unlink` 支持（`mkdir` / `rm` 命令 → Ext4_dir_ops `ext_mkdir` / `ext_unlink`） |
 | [✓] | cap 生命周期管理（2026-06-04）：每次 open 的 `Ext4_file_svr` 由客户端析构无条件发 `op_release` → 服务器 `unregister_obj` + 自删除（读写都回收，含从不调 op_close 的只读 `cat`）；子 `Ext4_namespace` 改为按路径去重缓存（无状态路由器，安全复用），把每次查询泄漏降为每个不同目录一份。QEMU 验证：8× release、写回完整性、6× 重复 cat 无崩溃、子目录 4× ls 缓存命中正常。同时修复 `op_close(0)` 会截断文件的潜在 footgun（改为跳过 flush）|
-| 待做 | 写并发互斥：同一文件多个 op_query 产生多个 svr，末次 op_close 覆盖前面写入 |
-| 待做 | 文件大小突破 4 MiB 限制（FILE_DS_MAX，考虑分段 DS 或流式写入） |
-| 待做 | tmpfs / ramfs（挂载到 /tmp，无需磁盘） |
+| [✓] | 流式 I/O 重设计（2026-06-08）：废弃整文件缓冲，改为 setup/pread/pwrite offset 模型 + 64KiB 弹跳缓冲；一举解决 4MiB 上限、并发写丢更新、每句柄内存。详见 [[缺口 3]] 表 |
+| [✓] | 原子 O_APPEND（`pappend` RPC，服务器 seek-EOF+write 单 RPC 内完成）+ shell `>>` |
+| [✓] | tmpfs（pkg/tmpfs，进程内 RAM /tmp，inode/handle 分离） |
 | 待做 | 其他块设备（emmc-driver、nvme-driver）挂载 ext4 |
+| 待做 | tmpfs 容量上限（防失控写耗尽 48MiB RAM）/ 跨进程共享 / 通用挂载到 l4re Vfs 构造 |
 
 详细设计见 [ext4-implementation-plan.md](ext4-implementation-plan.md)。
 

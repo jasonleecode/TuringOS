@@ -83,5 +83,25 @@ struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901>
          l4_uint32_t &state,
          l4_uint32_t &handle));
 
-    typedef L4::Typeid::Rpcs<spawn_t, wait_t, kill_t, task_count_t, task_stat_t> Rpcs;
+    /*
+     * Replace the calling child's program image (exec semantics).
+     *
+     * handle: the caller's OWN spawnd handle (from env SPAWND_HANDLE).
+     * path:   new executable ("rom/foo" or "/ext4/bin/foo")
+     * args:   argv packed as NUL-separated strings (as in spawn())
+     *
+     * spawnd loads the new program into a fresh task and installs it under the
+     * SAME handle/slot, then destroys the caller's old task.  The handle is
+     * preserved, so the parent's wait()/kill() keep working and now refer to
+     * the new program.  On success exec does NOT return (the caller's task is
+     * gone); on failure it returns a negative error and the caller keeps its
+     * old image.  Added last so existing opcodes don't shift.
+     */
+    L4_INLINE_RPC(long, exec,
+        (l4_uint32_t                handle,
+         L4::Ipc::Array<char const> path,
+         L4::Ipc::Array<char const> args));
+
+    typedef L4::Typeid::Rpcs<spawn_t, wait_t, kill_t, task_count_t,
+                             task_stat_t, exec_t> Rpcs;
 };

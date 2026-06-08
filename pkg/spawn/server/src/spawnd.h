@@ -35,6 +35,11 @@ public:
                           l4_uint32_t &state,
                           l4_uint32_t &handle);
 
+    l4_ret_t op_exec(Spawn_svr::Rights,
+                     l4_uint32_t                    handle,
+                     L4::Ipc::Array_ref<char const> path,
+                     L4::Ipc::Array_ref<char const> args);
+
 private:
     Task_table      _table;
     pthread_mutex_t _mtx;
@@ -50,6 +55,17 @@ private:
     Child_task *do_spawn(const char *path_str,
                          char *const *argv,
                          char *const *envp);
+
+    /*
+     * Load `path_str` as a fresh L4 task and bind its parent gate to the reaper
+     * with label (h<<2).  Injects SPAWND_HANDLE=<h> into the child env.  On
+     * success fills the four cap indices and returns true; on failure returns
+     * false (nothing to clean up — the loader unwinds its own allocations).
+     * Shared by do_spawn (new slot) and op_exec (replace existing slot).
+     */
+    bool load_image(l4_uint32_t h, const char *path_str, char *const *argv,
+                    l4_cap_idx_t *task, l4_cap_idx_t *thread,
+                    l4_cap_idx_t *rm, l4_cap_idx_t *gate);
 
     /*
      * Wait for a child to exit.  Uses a 200 ms timeout loop so a crash is
