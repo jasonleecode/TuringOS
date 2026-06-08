@@ -507,6 +507,64 @@ build_bootstrap() {
 }
 
 # ============================================================
+# 单包重建 (--pkg <name>)
+#
+# 解决"改了包内源码/头文件后改动不进镜像"的老问题：l4mk/pkg/ 下的符号链接包被
+# L4Re 当作 "external package"，产出落在 ext-pkg/<绝对路径>/ 而非 pkg/。
+# `make pkg/<name>` 只碰 pkg/（常为 stale），不碰 ext-pkg/——而后者才是打入镜像
+# 的二进制。这里直接定位该包在 pkg/ 与 ext-pkg/ 两处的所有 OBJ-* 目录并编译，
+# 再自动重新打包引导镜像，一步到位。
+#
+#   ./build.sh --board virt --pkg native_shell        # 重建并重打包默认入口
+#   ./build.sh --board virt --pkg ext4 --force        # 先 clean 再建（依赖库变动后强制重链）
+#   ENTRY=cyclictest ./build.sh --board virt --pkg native_shell   # 指定重打包入口
+#
+# 提示：若改的是 l4re 核心库的头文件（libc/l4re_vfs/ldso 等），依赖它的包二进制
+# 不会自动重链，用 --force 对受影响的包强制 clean+重建即可拉到新代码。
+# ============================================================
+build_pkg() {
+    local name="$1"
+    local force="${2:-0}"
+    [ -n "$name" ] || error "用法: $0 --board <board> --pkg <name> [--force]"
+
+    if [ ! -d "$L4RE_BUILD" ]; then
+        error "L4Re 构建树不存在 ($L4RE_BUILD)。请先: ./build.sh --board $BOARD l4re"
+    fi
+
+    # 在 pkg/ 与 ext-pkg/ 两处查找名为 <name> 的目录下的所有 OBJ-* 构建目录。
+    # -path "*/$name/*" 要求 name 是完整一级目录名（"/spawn/" 不会误中 "/spawnd/"）。
+    # 同名包通常有多个 OBJ（std-l4f / nofpu-l4f 多变体，或 client+server 多子目录）。
+    local found
+    found=$(find "$L4RE_BUILD/pkg" "$L4RE_BUILD/ext-pkg" \
+                 -type d -name "OBJ-*" -path "*/$name/*" 2>/dev/null | sort)
+
+    [ -n "$found" ] || error "找不到包 '$name' 的 OBJ 构建目录。检查包名，或先 ./build.sh --board $BOARD l4re。"
+
+    # 依赖顺序：先建库（client/ 与 lib/），再建可执行（server/），否则 --force 下
+    # 二进制可能链接到尚未重建的旧库（本代码库约定 server/src 为可执行程序）。
+    local objs
+    objs=$(printf '%s\n' "$found" | grep -v "/server/" || true)
+    objs=$(printf '%s\n%s\n' "$objs" "$(printf '%s\n' "$found" | grep "/server/" || true)" | grep -v '^$')
+
+    local jobs
+    jobs="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+
+    local obj
+    while IFS= read -r obj; do
+        [ -n "$obj" ] || continue
+        if [ "$force" = "1" ]; then
+            info "清理: ${obj#"$L4RE_BUILD"/}"
+            $MAKE -C "$obj" clean >/dev/null || error "clean 失败: $obj"
+        fi
+        info "构建: ${obj#"$L4RE_BUILD"/}"
+        $MAKE -C "$obj" -j"$jobs" || error "构建失败: $obj"
+    done <<< "$objs"
+
+    info "包 '$name' 重建完成，重新打包引导镜像..."
+    build_bootstrap
+}
+
+# ============================================================
 # 清理构建产物
 # ============================================================
 do_clean() {
@@ -646,12 +704,24 @@ main() {
     # 解析 --board 参数
     local board="rpi4"
     local target=""
+    local pkg_name=""
+    local force=0
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --board)
                 board="$2"
                 shift 2
+                ;;
+            --pkg)
+                target="pkg"
+                pkg_name="${2:-}"
+                shift
+                [ $# -gt 0 ] && shift
+                ;;
+            --force)
+                force=1
+                shift
                 ;;
             -h|--help)
                 show_usage
@@ -700,6 +770,9 @@ main() {
             build_bootstrap
             collect_artifacts
             ;;
+        pkg)
+            build_pkg "$pkg_name" "$force"
+            ;;
         collect)
             collect_artifacts
             ;;
@@ -720,6 +793,7 @@ main() {
 
 show_usage() {
     echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|clean|cleanall}"
+    echo "      $0 [--board <board>] --pkg <name> [--force]"
     echo ""
     echo "目标板 (--board):"
     echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
@@ -736,11 +810,19 @@ show_usage() {
     echo "  clean       清理编译中间文件（保留构建目录结构）"
     echo "  cleanall    完全清理构建目录（删除 build/kernel_* 和 build/l4re_*）"
     echo ""
+    echo "单包重建 (--pkg <name>):"
+    echo "  定位该包在 pkg/ 与 ext-pkg/ 两处的 OBJ 目录并编译，再自动重打包引导镜像，"
+    echo "  解决'改了包内代码但改动不进镜像'的老问题。"
+    echo "  --force     先 make clean 再重建（依赖库变动后强制重链，如改了 l4re 核心头文件）"
+    echo ""
     echo "示例:"
     echo "  $0                       # 默认 RPi4 全量构建"
     echo "  $0 --board bbb l4re      # 为 BBB 构建 L4Re"
     echo "  $0 --board bbb all       # BBB 全量构建"
     echo "  $0 --board bbb collect   # 仅收集 BBB 构建产物"
+    echo "  $0 --board virt --pkg native_shell          # 重建 native_shell 并重打包"
+    echo "  $0 --board virt --pkg ext4 --force          # clean 重建 ext4（含 client+server）"
+    echo "  ENTRY=cyclictest $0 --board virt --pkg native_shell  # 指定重打包入口"
     echo ""
     echo "环境变量:"
     echo "  CROSS_COMPILE  交叉编译器前缀 (会根据 --board 自动设置)"

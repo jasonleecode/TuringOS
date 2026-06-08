@@ -372,7 +372,7 @@ AM335x 平台适配代码已完成（时钟初始化、UART、I2C、RTC、GPIO�
 
 ---
 
-## 待优化：构建系统增量编译可靠性
+## 构建系统增量编译可靠性 [✓]
 
 **问题**：`pkg/` 下的包有两套构建输出目录，`make -C build/l4re_virt pkg/<name>` 只触发
 `build/l4re_virt/pkg/<name>/`，不触发 `build/l4re_virt/ext-pkg/.../<name>/`。
@@ -382,13 +382,13 @@ AM335x 平台适配代码已完成（时钟初始化、UART、I2C、RTC、GPIO�
 "external package"，产出放入 `ext-pkg/<绝对路径>/` 而不是 `pkg/`。直接 `make pkg/<name>`
 只构建 `pkg/` 目录（stale/older build），不构建 `ext-pkg/`。
 
-**临时 workaround**（已知有效）：
+**解决（2026-06-08）**：`build.sh` 新增 `--pkg <name>` 选项，自动在 `pkg/` 与 `ext-pkg/`
+两处定位该包所有 `OBJ-*` 目录（库 client/lib 先于可执行 server，保证 `--force` 下重链顺序）
+逐个编译，再自动重打包引导镜像，替代手动 find + bootstrap：
 ```bash
-# 直接在 ext-pkg 的 OBJ 目录里 make
-OBJ=$(find build/l4re_virt/ext-pkg -path "*/<name>/server/src/OBJ-*" -type d)
-make -C "$OBJ"
-# 然后 bootstrap
-./build.sh --board virt bootstrap
+./build.sh --board virt --pkg native_shell          # 重建并重打包
+./build.sh --board virt --pkg ext4 --force           # clean 重建（依赖库变动后强制重链）
+ENTRY=cyclictest ./build.sh --board virt --pkg native_shell   # 指定重打包入口
 ```
-
-**待做**：在 `build.sh` 里增加 `--pkg <name>` 选项，自动找到正确的 `ext-pkg` OBJ 目录并编译，替代手动 find。
+`--force`（clean+重建）也解决"改了 l4re 核心头文件（libc/l4re_vfs/ldso）后，依赖它的包
+二进制不自动重链"的问题（本会话曾两次踩到）。
