@@ -136,25 +136,63 @@ Spawn_model_base::open_from_ext4(const char *relpath)
   // Take ownership so the cap slot is freed when this scope exits.
   L4Re::Util::Unique_del_cap<Ext4_file_ops> fops(raw);
 
-  // Allocate a DS cap slot and receive the file dataspace from the server.
-  Const_dataspace ds(L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>());
-  if (!ds.is_valid()) {
-    fprintf(stderr, "[spawnd] open_from_ext4: DS cap alloc failed\n");
+  // The ext4 file protocol is now streaming (no whole-file DS).  Open the file
+  // server-side via op_setup to obtain the shared bounce buffer + size, then
+  // stream the whole file into a private DS the ELF loader can map.
+  auto buf = L4Re::Util::make_unique_cap<L4Re::Dataspace>();
+  if (!buf.is_valid()) {
+    fprintf(stderr, "[spawnd] open_from_ext4: buf cap alloc failed\n");
     return Const_dataspace();
   }
-
   l4_uint64_t fsize = 0;
-  long r = fops.get()->get_ds(ds.get(), fsize);
-  // Do NOT call close(0) here — close(written=0) truncates the file on disk.
-  // The Ext4_file_svr object leaks in the server registry (pre-existing issue),
-  // but the file content is preserved for ELF loading.
-
-  if (r < 0) {
-    fprintf(stderr, "[spawnd] open_from_ext4: get_ds failed (%ld)\n", r);
+  l4_uint32_t bsz   = 0;
+  long r = fops.get()->setup(buf.get(), fsize, bsz);
+  if (r < 0 || bsz == 0) {
+    fprintf(stderr, "[spawnd] open_from_ext4: setup failed (%ld)\n", r);
     return Const_dataspace();
   }
 
-  printf("[spawnd] open_from_ext4: '%s' %llu bytes\n", relpath, fsize);
+  unsigned long dsz = fsize ? (unsigned long)fsize : 1UL;
+  Const_dataspace ds(L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>());
+  if (!ds.is_valid()
+      || L4Re::Env::env()->mem_alloc()->alloc(dsz, ds.get()) < 0) {
+    fprintf(stderr, "[spawnd] open_from_ext4: dest DS alloc failed\n");
+    return Const_dataspace();
+  }
+
+  // Map bounce buffer + destination locally and copy the file across.
+  auto rm = L4Re::Env::env()->rm();
+  l4_addr_t buf_addr = 0, dst_addr = 0;
+  unsigned long buf_map = ((unsigned long)bsz + 4095UL) & ~4095UL;
+  unsigned long dst_map = (dsz + 4095UL) & ~4095UL;
+  bool ok = (rm->attach(&buf_addr, buf_map,
+                        L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
+                        L4::Ipc::make_cap_rw(buf.get()), 0) >= 0)
+         && (rm->attach(&dst_addr, dst_map,
+                        L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
+                        L4::Ipc::make_cap_rw(ds.get()), 0) >= 0);
+
+  for (l4_uint64_t off = 0; ok && off < fsize; ) {
+    l4_uint32_t chunk = ((fsize - off) > bsz) ? bsz : (l4_uint32_t)(fsize - off);
+    l4_uint32_t got = 0;
+    if (fops.get()->pread(off, chunk, got) < 0) { ok = false; break; }
+    if (got == 0) break;  // unexpected EOF
+    memcpy(reinterpret_cast<void *>(dst_addr + off),
+           reinterpret_cast<void *>(buf_addr), got);
+    off += got;
+  }
+
+  if (buf_addr) rm->detach(buf_addr, nullptr);
+  if (dst_addr) rm->detach(dst_addr, nullptr);
+  fops.get()->release();   // done with the file handle (frees server object)
+
+  if (!ok) {
+    fprintf(stderr, "[spawnd] open_from_ext4: stream read failed\n");
+    return Const_dataspace();
+  }
+
+  printf("[spawnd] open_from_ext4: '%s' %llu bytes\n", relpath,
+         (unsigned long long)fsize);
   return ds;
 }
 

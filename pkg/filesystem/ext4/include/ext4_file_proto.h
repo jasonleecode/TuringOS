@@ -1,10 +1,19 @@
 /*
- * TuringOS ext4fs — per-file IPC protocol (Phase 4: write support)
+ * TuringOS ext4fs — per-file IPC protocol (streaming I/O)
  * Copyright (c) 2026 Jason Lee <jasonlee@turingos.org>
  * License: MIT
  *
  * Two custom L4 protocols outside L4Re's 0x4000..0x401x range:
- *   Ext4_file_ops  (0x5800) — per-open-file: get shared DS, commit on close
+ *   Ext4_file_ops  (0x5800) — per-open-file: streaming offset read/write
+ *                              through a fixed shared bounce buffer.
+ *
+ * Design: the server keeps the underlying ext4 file open and seeks+reads/
+ * writes at explicit offsets, transferring data through one fixed-size R/W
+ * "bounce buffer" Dataspace shared with the client.  This replaces the old
+ * whole-file-into-a-DS model, removing the 4 MiB cap, the per-open whole-file
+ * memory cost, and the last-close-wins lost-update bug (writes are write-
+ * through; synchronous RPCs serialise buffer access on the single-threaded
+ * server).
  */
 #pragma once
 
@@ -19,35 +28,46 @@
 struct Ext4_file_ops
 : L4::Kobject_t<Ext4_file_ops, L4::Kobject, 0x5800>
 {
-  // Return a shared R/W Dataspace containing the file content, plus file
-  // size.  The Dataspace is pre-filled from disk.  The client maps it
-  // for local reads/writes.
-  L4_INLINE_RPC_NF(long, get_ds,
-    (L4::Ipc::Small_buf recv_ds,       // client-side: cap slot for DS
-     L4::Ipc::Snd_fpage &snd_ds,       // server-side: DS cap to send
-     l4_uint64_t &size));              // out: original file size
+  // Open the underlying ext4 file (creating it if absent) and hand back the
+  // shared bounce-buffer Dataspace plus the current file size.  Called once
+  // by the client right after it receives this cap.  `buf_size` is the usable
+  // byte capacity of the bounce buffer (max len for one pread/pwrite).
+  L4_INLINE_RPC_NF(long, setup,
+    (L4::Ipc::Small_buf recv_buf,      // client-side: cap slot for buffer DS
+     L4::Ipc::Snd_fpage &snd_buf,      // server-side: buffer DS cap to send
+     l4_uint64_t &size,                // out: current file size
+     l4_uint32_t &buf_size));          // out: bounce buffer capacity
 
-  // Flush first `written` bytes of the shared DS back to disk.  This commits
-  // pending writes (fsync / dirty fclose) but does NOT destroy the server
-  // object — the file may stay open for further writes.  Pass written=0 to
-  // skip the flush entirely (no truncation).
-  L4_INLINE_RPC(long, close, (l4_uint64_t written));
+  // Read up to `len` bytes at file offset `off` into the bounce buffer.
+  // Returns L4_EOK with `got` = bytes read (0 at EOF).  len is clamped to the
+  // buffer capacity by the server.
+  L4_INLINE_RPC(long, pread,
+    (l4_uint64_t off, l4_uint32_t len, l4_uint32_t &got));
+
+  // Write `len` bytes from the bounce buffer at file offset `off` (write-
+  // through to disk).  Returns L4_EOK with `put` = bytes written.
+  L4_INLINE_RPC(long, pwrite,
+    (l4_uint64_t off, l4_uint32_t len, l4_uint32_t &put));
+
+  // Truncate the file to `size` bytes.
+  L4_INLINE_RPC(long, ftruncate, (l4_uint64_t size));
 
   // Release the per-open server object: the client is done with this file
-  // handle (last fd closed).  The server unregisters and frees the object,
-  // its DS cap, and its IPC gate.  Called unconditionally from the client's
-  // destructor so that *read-only* opens are reclaimed too (they never call
-  // close).  After release the cap is dead; do not reuse it.
+  // handle (last fd closed).  The server closes the ext4 file, frees the
+  // bounce buffer + IPC gate, and self-destructs.  Called unconditionally
+  // from the client's destructor so read-only opens are reclaimed too.
+  // After release the cap is dead; do not reuse it.
   L4_INLINE_RPC(long, release, (void));
 
-  // Convenience wrapper: call get_ds and receive DS into `ds_slot`.
-  long get_ds(L4::Cap<L4Re::Dataspace> ds_slot, l4_uint64_t &size) const noexcept
+  // Convenience wrapper: call setup and receive the buffer DS into `buf_slot`.
+  long setup(L4::Cap<L4Re::Dataspace> buf_slot, l4_uint64_t &size,
+             l4_uint32_t &buf_size) const noexcept
   {
     L4::Ipc::Snd_fpage snd;
-    return get_ds_t::call(c(), L4::Ipc::Small_buf(ds_slot), snd, size);
+    return setup_t::call(c(), L4::Ipc::Small_buf(buf_slot), snd, size, buf_size);
   }
 
-  typedef L4::Typeid::Rpcs<get_ds_t, close_t, release_t> Rpcs;
+  typedef L4::Typeid::Rpcs<setup_t, pread_t, pwrite_t, ftruncate_t, release_t> Rpcs;
 };
 
 // Directory-mutation protocol on the root Ext4_namespace cap.

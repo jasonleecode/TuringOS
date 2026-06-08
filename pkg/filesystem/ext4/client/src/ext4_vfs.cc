@@ -14,6 +14,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <errno.h>
+#include <fcntl.h>
 
 // --------------------------------------------------------------------------
 // Ext4_file_vfs implementation
@@ -22,81 +23,82 @@
 Ext4_file_vfs::Ext4_file_vfs(L4::Cap<Ext4_file_ops> cap) noexcept
 : Be_file_pos(), _cap(cap)
 {
-  // Allocate a local cap slot for the DS we'll receive from the server.
-  _ds = L4Re::Util::make_unique_cap<L4Re::Dataspace>();
-  if (!_ds.is_valid())
+  // Allocate a local cap slot for the bounce buffer DS the server hands back.
+  _buf = L4Re::Util::make_unique_cap<L4Re::Dataspace>();
+  if (!_buf.is_valid())
     return;
 
-  // Ask the server for the shared DS and file size.
+  // Open the file server-side and obtain the shared bounce buffer + size.
   l4_uint64_t fsize = 0;
-  long r = cap->get_ds(_ds.get(), fsize);
-  if (r < 0)
+  l4_uint32_t bsz   = 0;
+  long r = cap->setup(_buf.get(), fsize, bsz);
+  if (r < 0 || bsz == 0)
     return;
 
-  _fsize = fsize;
+  _size     = fsize;
+  _buf_size = bsz;
 
-  // Calculate how large the DS actually is (at least one page).
-  unsigned long raw = fsize ? (unsigned long)fsize : 1UL;
-  _ds_size = (raw + 4095UL) & ~4095UL;
-  if (_ds_size < 4096UL) _ds_size = 4096UL;
-
-  // Map the DS locally for read/write.
-  _ds_addr = 0;
+  // Map the bounce buffer locally (round up to a page).
+  unsigned long map_sz = ((unsigned long)bsz + 4095UL) & ~4095UL;
+  if (map_sz < 4096UL) map_sz = 4096UL;
+  _buf_addr = 0;
   r = L4Re::Env::env()->rm()->attach(
-        &_ds_addr, _ds_size,
+        &_buf_addr, map_sz,
         L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
-        L4::Ipc::make_cap_rw(_ds.get()), 0);
+        L4::Ipc::make_cap_rw(_buf.get()), 0);
   if (r < 0)
-    { _ds_addr = 0; return; }
+    { _buf_addr = 0; return; }
 
   _valid = true;
 }
 
 Ext4_file_vfs::~Ext4_file_vfs() noexcept
 {
-  if (_ds_addr)
-    L4Re::Env::env()->rm()->detach(_ds_addr, nullptr);
-  // _ds unique_cap frees the slot.
-  // Note: we do NOT call op_close here — it was already called by
-  // unlock_all_locks() which fclose() invokes before the destructor.
+  if (_buf_addr)
+    L4Re::Env::env()->rm()->detach(_buf_addr, nullptr);
+  // _buf unique_cap frees the slot.
 
-  // Tell the server this handle is gone so it can free the per-open
-  // Ext4_file_svr (object + IPC gate + DS cap).  This runs for *every* open,
-  // including read-only ones that never trigger op_close — without it the
-  // server leaks a cap slot per open and a long-running system exhausts caps.
-  // Best-effort: ignore the result, the cap is about to be dropped anyway.
+  // Tell the server this handle is gone so it can close the ext4 file and free
+  // the per-open Ext4_file_svr (object + IPC gate + buffer DS).  Runs for
+  // *every* open (read-only too) — without it the server leaks a cap slot per
+  // open.  Best-effort: the cap is about to be dropped anyway.
   if (_cap.is_valid())
     _cap->release();
-}
-
-int Ext4_file_vfs::unlock_all_locks() noexcept
-{
-  if (_valid && _dirty)
-    _cap->close(_written);
-  return 0;
 }
 
 ssize_t Ext4_file_vfs::preadv(const struct iovec *iov, int cnt,
                                off64_t offset) noexcept
 {
-  if (!_valid || !_ds_addr) return -EIO;
+  if (!_valid || !_buf_addr) return -EIO;
 
-  l4_uint64_t vis = _visible_size();
   ssize_t total = 0;
+  off64_t pos = offset;
 
   for (int i = 0; i < cnt; ++i)
     {
-      if (offset >= (off64_t)vis) break;
+      char  *dst    = reinterpret_cast<char *>(iov[i].iov_base);
+      size_t remain = iov[i].iov_len;
 
-      size_t avail = (size_t)(vis - (l4_uint64_t)offset);
-      size_t todo  = iov[i].iov_len;
-      if (todo > avail) todo = avail;
-      if (todo == 0)    break;
+      while (remain > 0)
+        {
+          l4_uint32_t chunk = (remain > _buf_size) ? _buf_size
+                                                   : (l4_uint32_t)remain;
+          l4_uint32_t got = 0;
+          long r = _cap->pread((l4_uint64_t)pos, chunk, got);
+          if (r < 0)
+            return total ? total : -EIO;
+          if (got == 0)
+            return total;                 // EOF
 
-      memcpy(iov[i].iov_base,
-             reinterpret_cast<char *>(_ds_addr) + offset, todo);
-      offset += (off64_t)todo;
-      total  += (ssize_t)todo;
+          memcpy(dst, reinterpret_cast<void *>(_buf_addr), got);
+          dst    += got;
+          remain -= got;
+          pos    += (off64_t)got;
+          total  += (ssize_t)got;
+
+          if (got < chunk)
+            return total;                 // short read => EOF reached
+        }
     }
   return total;
 }
@@ -104,28 +106,38 @@ ssize_t Ext4_file_vfs::preadv(const struct iovec *iov, int cnt,
 ssize_t Ext4_file_vfs::pwritev(const struct iovec *iov, int cnt,
                                 off64_t offset) noexcept
 {
-  if (!_valid || !_ds_addr) return -EIO;
+  if (!_valid || !_buf_addr) return -EIO;
 
   ssize_t total = 0;
+  // O_APPEND: every write goes to the current end of file.
+  off64_t pos = _append ? (off64_t)_size : offset;
 
   for (int i = 0; i < cnt; ++i)
     {
-      size_t avail =
-        ((l4_uint64_t)offset < (l4_uint64_t)_ds_size)
-          ? (size_t)(_ds_size - (l4_uint64_t)offset)
-          : 0;
-      size_t todo = iov[i].iov_len;
-      if (todo > avail) todo = avail;
-      if (todo == 0)    break;
+      const char *src    = reinterpret_cast<const char *>(iov[i].iov_base);
+      size_t      remain = iov[i].iov_len;
 
-      memcpy(reinterpret_cast<char *>(_ds_addr) + offset,
-             iov[i].iov_base, todo);
-      offset += (off64_t)todo;
-      total  += (ssize_t)todo;
+      while (remain > 0)
+        {
+          l4_uint32_t chunk = (remain > _buf_size) ? _buf_size
+                                                   : (l4_uint32_t)remain;
+          memcpy(reinterpret_cast<void *>(_buf_addr), src, chunk);
 
-      if ((l4_uint64_t)offset > _written)
-        _written = (l4_uint64_t)offset;
-      _dirty = true;
+          l4_uint32_t put = 0;
+          long r = _cap->pwrite((l4_uint64_t)pos, chunk, put);
+          if (r < 0 || put == 0)
+            return total ? total : -EIO;
+
+          src    += put;
+          remain -= put;
+          pos    += (off64_t)put;
+          total  += (ssize_t)put;
+          if ((l4_uint64_t)pos > _size)
+            _size = (l4_uint64_t)pos;
+
+          if (put < chunk)
+            return total;                 // partial write
+        }
     }
   return total;
 }
@@ -134,7 +146,7 @@ int Ext4_file_vfs::fstat(struct stat64 *buf) const noexcept
 {
   memset(buf, 0, sizeof(*buf));
   buf->st_mode    = S_IFREG | 0644;
-  buf->st_size    = (off64_t)_visible_size();
+  buf->st_size    = (off64_t)_size;
   buf->st_blksize = 4096;
   buf->st_blocks  = (buf->st_size + 511) / 512;
   return 0;
@@ -143,34 +155,20 @@ int Ext4_file_vfs::fstat(struct stat64 *buf) const noexcept
 int Ext4_file_vfs::ftruncate(off64_t pos) noexcept
 {
   if (!_valid || pos < 0) return -EINVAL;
-
-  l4_uint64_t new_size = (l4_uint64_t)pos;
-
-  // If truncating to smaller: zero the tail in DS; update _written.
-  if (new_size < _visible_size() && _ds_addr)
-    {
-      l4_uint64_t from = new_size;
-      l4_uint64_t to   = _visible_size();
-      if (to > _ds_size) to = _ds_size;
-      if (from < to)
-        memset(reinterpret_cast<char *>(_ds_addr) + from, 0,
-               (size_t)(to - from));
-    }
-
-  _written = new_size;
-  _dirty   = true;
-  return 0;
-}
-
-int Ext4_file_vfs::fsync() const noexcept
-{
-  if (_valid && _dirty)
-    const_cast<Ext4_file_vfs *>(this)->_cap->close(_written);
+  long r = _cap->ftruncate((l4_uint64_t)pos);
+  if (r < 0) return -EIO;
+  _size = (l4_uint64_t)pos;
   return 0;
 }
 
 int Ext4_file_vfs::get_status_flags() const noexcept
-{ return O_RDWR; }
+{ return O_RDWR | (_append ? O_APPEND : 0); }
+
+int Ext4_file_vfs::set_status_flags(long flags) noexcept
+{
+  _append = (flags & O_APPEND) != 0;
+  return 0;
+}
 
 // --------------------------------------------------------------------------
 // Factory registration — executed before main() via init_priority
