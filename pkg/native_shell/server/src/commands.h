@@ -29,6 +29,7 @@ void cmd_ls(int argc, char **argv);
 void cmd_cat(int argc, char **argv);
 void cmd_mkdir(int argc, char **argv);
 void cmd_rm(int argc, char **argv);
+void cmd_tmpfstest(int argc, char **argv);
 
 /* system */
 void cmd_uname(int argc, char **argv);

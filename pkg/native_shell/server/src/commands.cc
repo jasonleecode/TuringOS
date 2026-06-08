@@ -6,6 +6,7 @@
 #include <dirent.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <readline/history.h>
 #include <pthread.h>
 
@@ -40,6 +41,7 @@ shell_cmd commands[] = {
     { "cat",        "Print file        <file>",             cmd_cat        },
     { "mkdir",      "Create directory  <dir>",              cmd_mkdir      },
     { "rm",         "Remove file       <file>",             cmd_rm         },
+    { "tmpfstest",  "Self-test the /tmp RAM filesystem",    cmd_tmpfstest  },
     /* system */
     { "uname",      "Print OS/arch info",                  cmd_uname      },
     { "env",        "Print environment variables",          cmd_env        },
@@ -275,6 +277,73 @@ void cmd_rm(int argc, char **argv)
         if (r < 0)
             printf("rm: %s: No such file or directory\n", argv[i]);
     }
+}
+
+/* Exercise the in-RAM /tmp filesystem entirely through libc (open/write/
+ * lseek/read/mkdir/opendir/readdir/unlink/stat) — this is exactly the path
+ * libc tmpfile()/mkstemp() rely on, and doubles as a permanent self-test. */
+void cmd_tmpfstest(int argc, char **argv)
+{
+    (void)argc; (void)argv;
+    const char *path = "/tmp/tmpfstest.txt";
+    const char *data = "hello tmpfs streaming 12345";
+    const size_t dlen = strlen(data);
+    int fails = 0;
+    char buf[64];
+    struct stat st;
+
+#define T(cond, msg) do { \
+        if (cond) printf("  ok   %s\n", (msg)); \
+        else { printf("  FAIL %s\n", (msg)); ++fails; } \
+    } while (0)
+
+    /* create + write */
+    int fd = open(path, O_CREAT | O_RDWR | O_TRUNC, 0644);
+    T(fd >= 0, "open(/tmp/.. , O_CREAT|O_RDWR)");
+    ssize_t w = (fd >= 0) ? write(fd, data, dlen) : -1;
+    T(w == (ssize_t)dlen, "write");
+
+    /* lseek + read back */
+    T(fd >= 0 && lseek(fd, 0, SEEK_SET) == 0, "lseek SEEK_SET");
+    memset(buf, 0, sizeof(buf));
+    ssize_t r = (fd >= 0) ? read(fd, buf, sizeof(buf) - 1) : -1;
+    T(r == (ssize_t)dlen && memcmp(buf, data, dlen) == 0, "read back matches");
+    if (fd >= 0) close(fd);
+
+    /* stat */
+    T(stat(path, &st) == 0 && (off_t)st.st_size == (off_t)dlen
+      && S_ISREG(st.st_mode), "stat size + mode");
+
+    /* mkdir + file inside subdir */
+    mkdir("/tmp/sub", 0755);   /* tolerate EEXIST from a prior run */
+    int fd2 = open("/tmp/sub/inner.txt", O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    T(fd2 >= 0, "create file in /tmp/sub");
+    if (fd2 >= 0) { write(fd2, "x", 1); close(fd2); }
+
+    /* opendir + readdir lists both entries */
+    int saw_file = 0, saw_dir = 0;
+    DIR *d = opendir("/tmp");
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) != nullptr) {
+            if (strcmp(e->d_name, "tmpfstest.txt") == 0) saw_file = 1;
+            if (strcmp(e->d_name, "sub") == 0)           saw_dir  = 1;
+        }
+        closedir(d);
+    }
+    T(d != nullptr && saw_file && saw_dir, "opendir/readdir lists entries");
+
+    /* unlink + confirm gone */
+    T(unlink(path) == 0, "unlink");
+    T(stat(path, &st) != 0, "file gone after unlink");
+
+    /* cleanup subdir */
+    unlink("/tmp/sub/inner.txt");
+    rmdir("/tmp/sub");
+
+#undef T
+    if (fails == 0) printf("tmpfstest: PASS\n");
+    else            printf("tmpfstest: FAIL (%d)\n", fails);
 }
 
 /* ------------------------------------------------------------------ */

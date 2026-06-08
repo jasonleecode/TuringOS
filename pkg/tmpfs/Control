@@ -1,0 +1,2 @@
+provides: tmpfs
+requires: libc stdlibs cxx_libc_io cxx_io libstdc++ l4util libgcc libgcc_eh

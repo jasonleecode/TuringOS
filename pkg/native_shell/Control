@@ -1,1 +1,1 @@
-requires: readline stdlibs compiler-rt rtc_libc_be rtc ds18b20 tef6686hn lwip libc_be_socket_lwip libsigma0 devfs libloader ext4_client libklog
+requires: readline stdlibs compiler-rt rtc_libc_be rtc ds18b20 tef6686hn lwip libc_be_socket_lwip libsigma0 devfs libloader ext4_client libklog tmpfs

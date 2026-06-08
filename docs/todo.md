@@ -98,10 +98,10 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | 文件大小上限 | [✓] | 流式 offset I/O，无上限（QEMU 验证 6MiB 拷贝字节一致） |
 | 并发写安全 | [✓] | 写穿透 + 服务器串行化，无整文件覆盖丢更新（O_APPEND 多写者非原子，待办） |
 | cap 生命周期 | [✓] | op_release（客户端析构无条件调用）释放 Ext4_file_svr；子 namespace 路径去重缓存（2026-06-04） |
-| tmpfs / ramfs | ✗ | 标准库依赖 /tmp，缺失会导致静默失败 |
+| tmpfs / ramfs | [✓] | 进程内 RAM /tmp（pkg/tmpfs，链入 native_shell；inode/handle 分离，open/读写/mkdir/unlink/readdir 全通） |
 | /proc / /sys | ✗ | 无法查询系统状态 |
 
-**当前优先级**：tmpfs（很多标准库隐式依赖 `/tmp`）；其后 O_APPEND 服务器端原子追加。
+**当前优先级**：ext4 O_APPEND 服务器端原子追加；tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）。
 
 #### 缺口 4：Shell 功能残缺
 
