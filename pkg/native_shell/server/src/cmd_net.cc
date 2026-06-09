@@ -708,9 +708,17 @@ static void net_configure_ip()
   netif_set_addr(&n_netif, &ip, &nm, &gw);
   UNLOCK_TCPIP_CORE();
 
-  printf("net: IP %s", ip4addr_ntoa(&ip));
-  printf("  netmask %s", ip4addr_ntoa(&nm));
-  printf("  gw %s\n", ip4addr_ntoa(&gw));
+  /* This runs on the background auto-init thread, concurrently with the
+   * login prompt on the main thread.  Use klog (own line, no trailing
+   * prompt) rather than a raw printf that would append onto "login: ".
+   * `ifconfig` shows the full per-field breakdown on demand. */
+  {
+    char ip_s[16], nm_s[16], gw_s[16];
+    snprintf(ip_s, sizeof(ip_s), "%s", ip4addr_ntoa(&ip));
+    snprintf(nm_s, sizeof(nm_s), "%s", ip4addr_ntoa(&nm));
+    snprintf(gw_s, sizeof(gw_s), "%s", ip4addr_ntoa(&gw));
+    klog_info(KLOG_NET, "net: IP %s netmask %s gw %s", ip_s, nm_s, gw_s);
+  }
 
   /* Configure QEMU slirp DNS server (always at 10.0.2.3 in user-mode NAT) */
   ip_addr_t dns_addr;

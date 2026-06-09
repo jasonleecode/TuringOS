@@ -144,6 +144,9 @@ static bool do_login()
     for (int attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt++) {
         printf("login: "); fflush(stdout);
         read_login_line(user, sizeof(user), false);
+        /* Empty username (e.g. a bare Enter, or the prompt was clobbered by
+         * late boot logs): re-prompt rather than asking for a password. */
+        if (user[0] == '\0') { attempt--; continue; }
         printf("Password: "); fflush(stdout);
         read_login_line(pass, sizeof(pass), true);
         if (strcmp(user, LOGIN_USER) == 0 && strcmp(pass, LOGIN_PASS) == 0)
@@ -281,7 +284,15 @@ int main(int argc, char const* const* argv)
     };
 
     klog_info(KLOG_KERN, "shell ready");
+
+    /* net_auto_init() logs IP/DNS status from a background thread that shares
+     * this serial console.  Briefly wait for it to finish (static config is
+     * sub-second) so those lines flush *before* the login prompt instead of
+     * clobbering it.  Bounded so DHCP / no-network boots aren't held up. */
+    for (int waited = 0; !net_is_ready() && waited < 1500; waited += 50)
+        usleep(50 * 1000);
     klog_flush();
+
     printf("\nTuringOS 1.0 (ttyS0)\n\n");
     for (;;) {
         if (do_login()) break;
