@@ -108,7 +108,8 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | tmpfs / ramfs | [✓] | 进程内 RAM /tmp（pkg/tmpfs，链入 native_shell；inode/handle 分离，open/读写/mkdir/unlink/readdir 全通） |
 | /proc / /sys | [✓] | 合成只读 VFS（pkg/procfs，链入 native_shell，读时生成）：/proc/{uptime,meminfo,version,cpuinfo,tasks}、/sys/{cpu_online,version}（2026-06-09）|
 
-**当前优先级**：tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）；其后转向真机点亮 + 裸机 cyclictest（RT/工业方向的闸门）。
+**缺口 3 已完整闭合**（2026-06-09）。剩余皆为增量：tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）、其他块设备挂 ext4。
+战略优先级见上方进度小结：缺口 **2（管道）/ 4（Shell）/ 6（安全）** + 已推后的 **P0 调度崩溃**。
 
 #### 缺口 4：Shell 功能残缺
 
@@ -236,7 +237,7 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 
 | 状态 | 子任务 |
 |------|------|
-| [✓] | `&` 后台、`>` 重定向、Tab 命令名补全、历史记录 |
+| [✓] | `&` 后台、`>` 重定向、`>>` 追加重定向（2026-06-08，配合 ext4/tmpfs O_APPEND）、Tab 命令名补全、历史记录 |
 | 待做 | `\|` 管道（依赖上方 pipe IPC） |
 | 待做 | 环境变量（`export VAR=val`、`$VAR` 展开） |
 | 待做 | PATH 路径搜索（从 `/ext4/bin` 等目录查找可执行文件） |
