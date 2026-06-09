@@ -64,6 +64,9 @@ shell_cmd commands[] = {
     { "ping",       "ICMP ping  <host> [-c count]",                        cmd_ping     },
     { "nslookup",   "DNS lookup  <hostname>",                              cmd_nslookup },
     { "udp",        "Start UDP echo server on port 5001",                  cmd_udp      },
+    /* net-cluster — outward connectivity */
+    { "mqtt",       "MQTT client  pub|sub <broker> <topic> [msg|secs]",    cmd_mqtt     },
+    { "telnetd",    "Telnet server (single session)  [port]",              cmd_telnetd  },
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);

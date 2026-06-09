@@ -56,6 +56,10 @@ void cmd_udp(int argc, char **argv);
 void net_auto_init();  /* start network stack in background at boot */
 bool net_is_ready();   /* true once virtio-net + lwIP fully up */
 
+/* net-cluster — outward connectivity suite (linked from pkg/net-cluster) */
+void cmd_mqtt(int argc, char **argv);     /* libnc_mqtt */
+void cmd_telnetd(int argc, char **argv);  /* cmd_telnet.cc + libnc_telnet */
+
 /* system */
 void cmd_list_tasks(int argc, char **argv);
 void cmd_top(int argc, char **argv);

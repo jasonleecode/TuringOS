@@ -15,6 +15,7 @@ include $(PKGDIR)/lib/$(LWIPDIR)/Filelists.mk
 
 SRC_C            = $(filter-out contrib/src/netif/slipif.c \
                                 contrib/src/core/ipv6/inet6.c,$(LWIPNOAPPSFILES)) \
+                   $(LWIPDIR)/apps/mqtt/mqtt.c \
                    contrib/contrib/ports/unix/port/perf.c \
                    contrib/contrib/ports/unix/port/sys_arch.c
 SRC_CC           = l4libinit.cc

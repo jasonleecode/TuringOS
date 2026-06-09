@@ -1,0 +1,2 @@
+provides: nc_mqtt nc_telnet
+requires: stdlibs libstdc++ lwip l4util libpthread libc_be_socket_lwip

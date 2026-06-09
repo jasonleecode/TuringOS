@@ -213,6 +213,17 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 | [✓] | DHCP 客户端（2026-06-09）：lwIP DHCP，`dhcp [release]` 命令 + `IFCONFIG_IP4_vn0=dhcp` 启动时动态获取（失败回退静态）。QEMU 验证：从 SLIRP DHCP 获到 10.0.2.15/24 gw 10.0.2.2 DNS 10.0.2.3，release 正常。静态仍为默认（快启动/兼容） |
 | 待做 | HTTP 客户端（wget / curl 最小实现） |
 
+#### net-cluster — 对外连接套件（`pkg/net-cluster`，2026-06-09）
+
+协议库链入 native_shell（lwIP 跑在 shell 进程内，故 mqtt/telnet 必须同进程）；并掉了空壳 `pkg/net-tools`。
+
+| 状态 | 子任务 |
+|------|------|
+| [✓] | MQTT 客户端（`libnc_mqtt`，`mqtt pub\|sub <broker> <topic> [msg\|secs]`）：编入 lwIP `apps/mqtt`，明文 QoS0，连接/发布回调跑在 tcpip 线程→命令线程轮询标志；所有 `mqtt_*` 调用持 `LOCK_TCPIP_CORE`。QEMU 验证：向主机 Python broker stub `PUBLISH turingos/test hello_from_turingos` 成功 |
+| [✓] | telnet 服务（`libnc_telnet` + `cmd_telnet.cc`，`telnetd [port]`）：单前台会话，`dup2(sock, STDOUT)` 复用全部 shell 命令，剥离 IAC，行模式分发。QEMU 验证：主机 telnet 客户端经 hostfwd 远程跑 `uname`/`uptime`/`exit` 回显正常 |
+| 待做 | TLS/crypto 后端（移植 mbedTLS 接 lwIP `altcp_tls`）——mqtts / https / **ssh** 的共同前提，列为独立里程碑 |
+| 待做 | telnetd 并发多会话（需解决 STDOUT 多路复用）；HTTP 客户端 |
+
 ### 串口通信
 
 | 状态 | 子任务 |
