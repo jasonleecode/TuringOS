@@ -65,7 +65,7 @@ Fiasco.OC (微内核)
 
 ### 六大核心缺口
 
-> **进度小结（2026-06-08 复盘）**：缺口 1（进程生命周期，exec 已补齐，**完整闭合**）、缺口 3（文件系统，仅缺 /proc /sys）、
+> **进度小结（2026-06-09 复盘）**：缺口 1（进程生命周期，含 exec，**完整闭合**）、缺口 3（文件系统，含 /proc /sys，**完整闭合**）、
 > 缺口 5（日志，仅缺轮转）已**闭合 / 基本闭合**。仍**敞着的结构性缺口**是 **2（管道/IPC 通道）**、
 > **4（Shell 仍是命令分发器）**、**6（安全模型：密码硬编码 + `run` 全量转发 cap 含 sigma0 + 无隔离）**。
 > 另有跨越所有方向的 **P0 调度概率崩溃**——目前只缓解 + CI 门禁守着，根因（Fiasco 已知设计缺陷）未除，
@@ -106,7 +106,7 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | 并发写安全 | [✓] | 写穿透 + 服务器串行化无丢更新；O_APPEND 服务器端原子追加（`pappend` RPC：seek EOF+write 单 RPC 内完成，并发追加不互相覆盖；shell `>>` 已支持，tmpfs 同步支持） |
 | cap 生命周期 | [✓] | op_release（客户端析构无条件调用）释放 Ext4_file_svr；子 namespace 路径去重缓存（2026-06-04） |
 | tmpfs / ramfs | [✓] | 进程内 RAM /tmp（pkg/tmpfs，链入 native_shell；inode/handle 分离，open/读写/mkdir/unlink/readdir 全通） |
-| /proc / /sys | ✗ | 无法查询系统状态 |
+| /proc / /sys | [✓] | 合成只读 VFS（pkg/procfs，链入 native_shell，读时生成）：/proc/{uptime,meminfo,version,cpuinfo,tasks}、/sys/{cpu_online,version}（2026-06-09）|
 
 **当前优先级**：tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）；其后转向真机点亮 + 裸机 cyclictest（RT/工业方向的闸门）。
 
@@ -142,6 +142,11 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 ---
 
 ## 已知问题（仍需要长期测试复现）
+
+> **★ 指定的下一个 P0（用户 2026-06-08 主动推后，"先记下，稍后解决"）**：下方调度概率崩溃是
+> 当前唯一 P0、整个系统的地基裂缝、RT/工业方向的硬闸门。目前只**缓解 + CI 门禁守着，根因未除**。
+> 攻它的打法：用 `tools/ci_smp_smoke.sh -n 100` 量化 baseline 崩溃率 → 逐路径把 SMP 调度里直接调
+> `schedule()`（而非 `schedule_if()`）的地方收掉 → 每改一版重测前后崩溃率（概率缺陷，单次过不算修）。
 
 | 优先级 | 问题 | 现象 | 怀疑点 |
 |--------|------|------|------|
