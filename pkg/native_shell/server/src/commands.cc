@@ -161,6 +161,12 @@ void cmd_cd(int argc, char **argv)
         printf("cd: %s: %s\n", path, strerror(errno));
 }
 
+static int ls_name_cmp(const void *a, const void *b)
+{
+    return strcmp(*static_cast<char const *const *>(a),
+                  *static_cast<char const *const *>(b));
+}
+
 void cmd_ls(int argc, char **argv)
 {
     const char *path = (argc > 1) ? argv[1] : ".";
@@ -169,8 +175,14 @@ void cmd_ls(int argc, char **argv)
         printf("ls: %s: %s\n", path, strerror(errno));
         return;
     }
+
+    enum { MAX_ENTRIES = 1024, TERM_COLS = 80 };
+    char **names = static_cast<char **>(malloc(MAX_ENTRIES * sizeof(char *)));
+    int    n     = 0;
+    size_t maxw  = 0;
+
     struct dirent *entry;
-    while ((entry = readdir(dir)) != nullptr) {
+    while (names && n < MAX_ENTRIES && (entry = readdir(dir)) != nullptr) {
         if (entry->d_name[0] == '.' &&
             (entry->d_name[1] == '\0' ||
              (entry->d_name[1] == '.' && entry->d_name[2] == '\0')))
@@ -178,10 +190,44 @@ void cmd_ls(int argc, char **argv)
 
         /* Use d_type set by ext4 dirinfo type tag; avoid stat() which would
          * block indefinitely on non-VFS caps (sigma0, factory, etc.). */
-        bool is_dir = (entry->d_type == DT_DIR);
-        printf("%s%s\n", entry->d_name, is_dir ? "/" : "");
+        bool   is_dir = (entry->d_type == DT_DIR);
+        size_t nlen   = strlen(entry->d_name);
+        size_t len    = nlen + (is_dir ? 1 : 0);   // displayed width incl. '/'
+        char  *s      = static_cast<char *>(malloc(len + 1));
+        if (!s) break;
+        memcpy(s, entry->d_name, nlen);
+        if (is_dir) s[nlen] = '/';
+        s[len] = '\0';
+        names[n++] = s;
+        if (len > maxw) maxw = len;
     }
     closedir(dir);
+
+    if (n == 0) { free(names); return; }
+
+    /* Sort alphabetically, like GNU ls. */
+    qsort(names, n, sizeof(char *), ls_name_cmp);
+
+    /* Column-major layout (entries run DOWN each column, then across) that
+     * fits TERM_COLS, with a 2-space gap between columns. */
+    size_t colw  = maxw + 2;
+    int    ncols = (int)(TERM_COLS / colw);
+    if (ncols < 1) ncols = 1;
+    int    nrows = (n + ncols - 1) / ncols;
+
+    for (int r = 0; r < nrows; r++) {
+        for (int c = 0; c < ncols; c++) {
+            int idx = c * nrows + r;
+            if (idx >= n) continue;
+            bool last_on_row = ((c + 1) * nrows + r >= n);  // no entry to the right
+            if (last_on_row) printf("%s", names[idx]);
+            else             printf("%-*s", (int)colw, names[idx]);
+        }
+        printf("\n");
+    }
+
+    for (int i = 0; i < n; i++) free(names[i]);
+    free(names);
 }
 
 void cmd_cat(int argc, char **argv)
