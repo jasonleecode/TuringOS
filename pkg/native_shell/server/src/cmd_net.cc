@@ -616,6 +616,46 @@ static bool net_alloc_dma(struct virtnet_dma **dma_out, l4_uint64_t *phys_out)
 }
 
 /* ------------------------------------------------------------------ */
+/* DHCP client                                                          */
+/* ------------------------------------------------------------------ */
+/* Acquire an IPv4 lease via DHCP on vn0.  lwIP's tcpip thread drives the
+ * DHCP state machine + timers; we kick it off (thread-safe netifapi) and
+ * poll dhcp_supplied_address() until bound or timeout.  Returns true on bind.
+ * Works whether the netif currently has a static address or none — dhcp_start
+ * issues a fresh DISCOVER and takes over the interface. */
+static bool do_dhcp(int timeout_ms)
+{
+  printf("dhcp: requesting lease on vn0 ...\n");
+  if (netifapi_dhcp_start(&n_netif) != ERR_OK) {
+    printf("dhcp: dhcp_start failed\n");
+    return false;
+  }
+
+  int waited = 0;
+  while (waited < timeout_ms && !dhcp_supplied_address(&n_netif)) {
+    sys_msleep(100);
+    waited += 100;
+  }
+  if (!dhcp_supplied_address(&n_netif)) {
+    printf("dhcp: no offer after %d ms\n", timeout_ms);
+    return false;
+  }
+
+  printf("dhcp: bound  IP %s", ip4addr_ntoa(netif_ip4_addr(&n_netif)));
+  printf("  netmask %s", ip4addr_ntoa(netif_ip4_netmask(&n_netif)));
+  printf("  gw %s\n", ip4addr_ntoa(netif_ip4_gw(&n_netif)));
+
+  /* DHCP option 6 may supply DNS; otherwise fall back to the SLIRP resolver. */
+  if (ip_addr_isany(dns_getserver(0))) {
+    ip_addr_t dns;
+    IP_ADDR4(&dns, 10, 0, 2, 3);
+    dns_setserver(0, &dns);
+  }
+  printf("dhcp: DNS %s\n", ipaddr_ntoa(dns_getserver(0)));
+  return true;
+}
+
+/* ------------------------------------------------------------------ */
 /* IP configuration                                                     */
 /* ------------------------------------------------------------------ */
 static void net_configure_ip()
@@ -623,6 +663,15 @@ static void net_configure_ip()
   const char *cfg = getenv("IFCONFIG_IP4_vn0");
   if (!cfg)
     cfg = "10.0.2.15/24 via 10.0.2.2";
+
+  /* IFCONFIG_IP4_vn0=dhcp -> obtain the address dynamically.  On failure fall
+   * back to the static default so the system still has connectivity. */
+  if (strcmp(cfg, "dhcp") == 0) {
+    if (do_dhcp(8000))
+      return;
+    printf("net: DHCP failed, falling back to static 10.0.2.15/24\n");
+    cfg = "10.0.2.15/24 via 10.0.2.2";
+  }
 
   ip4_addr_t ip, nm, gw;
   unsigned prefix = 24;
@@ -856,6 +905,23 @@ void net_auto_init()
   pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
   pthread_create(&t, &attr, net_stack_init_thread, nullptr);
   pthread_attr_destroy(&attr);
+}
+
+/* ------------------------------------------------------------------ */
+/* dhcp command                                                         */
+/* ------------------------------------------------------------------ */
+void cmd_dhcp(int argc, char **argv)
+{
+  if (!net_is_ready()) {
+    printf("dhcp: network not ready\n");
+    return;
+  }
+  if (argc > 1 && strcmp(argv[1], "release") == 0) {
+    netifapi_dhcp_release_and_stop(&n_netif);
+    printf("dhcp: lease released, DHCP stopped\n");
+    return;
+  }
+  do_dhcp(8000);
 }
 
 /* ------------------------------------------------------------------ */

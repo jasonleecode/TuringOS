@@ -209,7 +209,7 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 | [✓] | UDP 支持验证（udp 命令，echo server port 5001，hostfwd=udp::5556-:5001） |
 | [✓] | DNS 解析（nslookup 命令，lwip_getaddrinfo，DNS 服务器 10.0.2.3） |
 | [✓] | ping 命令（ICMP raw socket，支持 -c 计数，RTT 统计） |
-| 待做 | DHCP 客户端（当前 IP 为 QEMU SLIRP 静态分配） |
+| [✓] | DHCP 客户端（2026-06-09）：lwIP DHCP，`dhcp [release]` 命令 + `IFCONFIG_IP4_vn0=dhcp` 启动时动态获取（失败回退静态）。QEMU 验证：从 SLIRP DHCP 获到 10.0.2.15/24 gw 10.0.2.2 DNS 10.0.2.3，release 正常。静态仍为默认（快启动/兼容） |
 | 待做 | HTTP 客户端（wget / curl 最小实现） |
 
 ### 串口通信

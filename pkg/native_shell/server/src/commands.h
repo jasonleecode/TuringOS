@@ -49,6 +49,7 @@ void cmd_radio(int argc, char **argv);
 /* network */
 void cmd_net(int argc, char **argv);
 void cmd_ifconfig(int argc, char **argv);
+void cmd_dhcp(int argc, char **argv);
 void cmd_ping(int argc, char **argv);
 void cmd_nslookup(int argc, char **argv);
 void cmd_udp(int argc, char **argv);

@@ -60,6 +60,7 @@ shell_cmd commands[] = {
     /* network */
     { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net      },
     { "ifconfig",   "Show network interfaces and IP info",                  cmd_ifconfig },
+    { "dhcp",       "Acquire IP via DHCP  [release]",                       cmd_dhcp     },
     { "ping",       "ICMP ping  <host> [-c count]",                        cmd_ping     },
     { "nslookup",   "DNS lookup  <hostname>",                              cmd_nslookup },
     { "udp",        "Start UDP echo server on port 5001",                  cmd_udp      },
