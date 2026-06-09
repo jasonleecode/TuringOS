@@ -68,8 +68,8 @@ Fiasco.OC (微内核)
 > **进度小结（2026-06-09 复盘）**：缺口 1（进程生命周期，含 exec，**完整闭合**）、缺口 3（文件系统，含 /proc /sys，**完整闭合**）、
 > 缺口 5（日志，仅缺轮转）已**闭合 / 基本闭合**。仍**敞着的结构性缺口**是 **2（管道/IPC 通道）**、
 > **4（Shell 仍是命令分发器）**、**6（安全模型：密码硬编码 + `run` 全量转发 cap 含 sigma0 + 无隔离）**。
-> 另有跨越所有方向的 **P0 调度概率崩溃**——目前只缓解 + CI 门禁守着，根因（Fiasco 已知设计缺陷）未除，
-> 是任何实时/工业方向的硬闸门。
+> 跨越所有方向的 **P0 调度概率崩溃已于 2026-06-09 修复**（根因＝preemption_point 抢占切走后留下的陈旧
+> `schedule_in_progress` 标志；`kernel/` context.cpp 修，login 风暴复现率 100%→0%）——RT/工业方向的硬闸门已拆。
 
 #### 缺口 1：进程生命周期（最关键）
 
@@ -144,14 +144,17 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 
 ## 已知问题（仍需要长期测试复现）
 
-> **★ 指定的下一个 P0（用户 2026-06-08 主动推后，"先记下，稍后解决"）**：下方调度概率崩溃是
-> 当前唯一 P0、整个系统的地基裂缝、RT/工业方向的硬闸门。目前只**缓解 + CI 门禁守着，根因未除**。
-> 攻它的打法：用 `tools/ci_smp_smoke.sh -n 100` 量化 baseline 崩溃率 → 逐路径把 SMP 调度里直接调
-> `schedule()`（而非 `schedule_if()`）的地方收掉 → 每改一版重测前后崩溃率（概率缺陷，单次过不算修）。
+> **★ P0 调度崩溃 — 2026-06-09 已修复并验证（根因＝陈旧标志，非重入）**。用 `tools/smp_crash_rate.sh`
+> 量化发现**登录提示符击键风暴是 100% 确定性复现器**（且 `-smp 1` 单核也崩，推翻"SMP-only"旧定性），
+> 进 JDB 抓栈 + 诊断打印坐实：`schedule_in_progress` 的属主是**被抢占切走的另一个上下文**（idle/kernel
+> context 在自己的 preemption_point 里把 CPU 交给刚唤醒的线程、来不及清标志）→ 后续线程进 `schedule()`
+> 撞见陈旧标志。修法（`kernel/src/kern/context.cpp` 两处）：入口处清掉属主≠current 的陈旧标志（属主==current
+> 仍是真重入、保留断言）；属主清除点改为"仅当==this 才清"防误清。验证：login 风暴 smp1/smp2 各 20 轮
+> **0/20 崩**（修前 60/60＝100%），ext4 + spawn 冒烟回归全绿。
 
-| 优先级 | 问题 | 现象 | 怀疑点 |
+| 优先级 | 问题 | 现象 | 根因与修复 |
 |--------|------|------|------|
-| P0 | **任务调度概率崩溃** | SMP=2 下偶发 `context.cpp:758: !schedule_in_progress` 断言，CPU 进入 JDB 死循环 | `Context::schedule()` 在 `preemption_point()`（sti→cli 窗口）开中断时，硬件 IRQ 触发的调度路径（`switch_to_locked` / `Switch_lock::help`）直接调 `schedule()` 而非 `schedule_if()`，重入断言；已初步修复两处调用点，但其他路径可能仍存在同类问题 |
+| ~~P0~~ ✅ | **任务调度概率崩溃（已修 2026-06-09）** | `context.cpp:758: !schedule_in_progress` 断言，CPU 进 JDB 死循环；登录击键风暴 100% 复现（单核亦然） | **陈旧标志**（非重入）：某上下文 `schedule()` 置 `schedule_in_progress` 后在 `preemption_point` 窗口被 IRQ 抢占切走、未清标志 → 别的线程进 `schedule()` 撞陈旧标志。修复：`Context::schedule()` 入口清属主≠`current()` 的陈旧标志 + 属主清除点条件化（`==this` 才清）。复现/验证：`tools/smp_crash_rate.sh` |
 
 **P0 回归门禁（2026-06-04）**：`tools/ci_smp_smoke.sh` 将调度概率崩溃做成 CI 冒烟测试。
 反复无显示启动 `smp-spawn-bench-ci` entry（spawnd 反复 create/destroy + 跨核 IPC 噪声，
