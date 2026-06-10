@@ -324,7 +324,8 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 | 状态 | 子任务 |
 |------|------|
 | [✓] | **Phase 0（2026-06-10）：ds18b20 抽成独立 `ds18b20-server`**——协议头 `Temp_svr`（`L4::Kobject_t<…,0x5902>` + `read_temp_c100` RPC）、`Epiface` 服务器（`Registry_server`，仿 spawnd）、ned 只给 `{svr, vbus}`（隔离，对比 shell 全量 cap）、native_shell `temp` 改 IPC 客户端、去 ds18b20 lib 链接。QEMU 验证：`temp` 读出活值 `25.xx °C (sim)`（真 IPC 往返）、驱动独立 task、无回归。砍了安全缺口 6 一角 |
-| 待做 | Phase 1：radio(tef6686hn) 迁服务器 + 把 Temp_svr 提炼成通用 **sensor class 协议**（独立 header 包） |
+| [✓] | **Phase 1（2026-06-10）：radio(tef6686hn) 迁成独立 `tef6686hn-server`**——`Radio_svr` 协议（0x5903，init/tune/seek/status/mute/volume）、有状态服务器（**调谐状态存在服务器、跨命令保持**：tune 101.1→status 显 101.1→seek→101.3→status 显 101.3）、多波段 FM/MW/LW、ned 只给 `{svr}`（无 i2c-server→sim）。验证：QEMU radio 全流程 IPC + 状态持久 + 独立 task；ci_smp_smoke 3/3。（rds 留作后续——结构体 marshaling） |
+| 待做 | 把 Temp_svr/Radio_svr 提炼成**通用 class 协议**（独立 header 包，不再借 ds18b20/tef6686hn include）；rds RPC |
 | 待做 | Phase 2：**dev Namespace 注册表**（驱动注册、shell 查名拿 cap，不再 ned 写死） |
 | 待做 | Phase 3：**device-manager**——枚举 vbus + match → 用 spawnd 动态启动驱动 + 转交 cap（probe/bind） |
 | 待做 | Phase 4：procfs 扩 **/sys/devices** 统一自省 + hotplug |

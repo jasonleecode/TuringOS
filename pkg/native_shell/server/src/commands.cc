@@ -17,7 +17,7 @@
 #include <l4/rtc/rtc.h>
 #include <l4/util/util.h>
 #include <temp_proto.h>           /* ds18b20-server protocol (via PRIVATE_INCDIR) */
-#include <l4/tef6686hn/tef6686hn.h>
+#include <radio_proto.h>          /* tef6686hn-server protocol (via PRIVATE_INCDIR) */
 
 #include "commands.h"
 #include "shell_exec.h"
@@ -542,39 +542,13 @@ void cmd_temp(int argc, char **argv)
 /* Radio command (TEF6686HN FM/AM tuner)                               */
 /* ------------------------------------------------------------------ */
 
-static Tef6686hn *g_radio = nullptr;
-
-/* Open the I2C device for the TEF6686HN (addr 0x1C) via the factory cap. */
-static L4::Cap<I2c_device_ops> radio_open_i2c()
+/* radio command — client of tef6686hn-server (driver-framework Phase 1).  The
+ * TEF6686HN driver runs as its own task; we call the Radio_svr protocol over
+ * the "radio" cap.  Tuner state (initialised? frequency?) lives in the server,
+ * so it persists across separate `radio` command invocations. */
+static L4::Cap<Radio_svr> radio_cap()
 {
-    auto factory = L4Re::Env::env()->get_cap<L4::Factory>("i2c");
-    if (!factory.is_valid())
-    {
-        printf("radio: 'i2c' capability not available\n");
-        return L4::Cap<I2c_device_ops>::Invalid;
-    }
-
-    auto dev = L4Re::Util::cap_alloc.alloc<I2c_device_ops>();
-    if (!dev.is_valid())
-    {
-        printf("radio: capability allocation failed\n");
-        return L4::Cap<I2c_device_ops>::Invalid;
-    }
-
-    char addr_str[16];
-    snprintf(addr_str, sizeof(addr_str), "addr=%x",
-             static_cast<unsigned>(Tef6686hn::I2c_addr));
-
-    long r = l4_error(factory->create(dev, 1L)
-                      << static_cast<char const *>(addr_str));
-    if (r < 0)
-    {
-        printf("radio: I2C device create failed (%ld)\n", r);
-        L4Re::Util::cap_alloc.free(dev);
-        return L4::Cap<I2c_device_ops>::Invalid;
-    }
-
-    return dev;
+    return L4Re::Env::env()->get_cap<Radio_svr>("radio");
 }
 
 /* Parse FM frequency string "98.0" or "98" → kHz (98000). */
@@ -594,28 +568,17 @@ static l4_uint32_t parse_fm_mhz(const char *s)
     return whole * 1000 + frac;
 }
 
-static void radio_print_quality(Tef6686hn::Quality const &q)
-{
-    printf("  RSSI %5.1f dBuV   SNR %5.1f dB   MP %3d   offset %+d Hz\n",
-           q.rssi      / 10.0,
-           q.snr       / 10.0,
-           static_cast<int>(q.multipath),
-           static_cast<int>(q.freq_offset) * 10);
-}
-
 static void radio_help()
 {
     printf("Usage: radio <subcommand> [args]\n");
-    printf("  init               Initialize the chip (run first)\n");
+    printf("  init               Initialize the tuner (run first)\n");
     printf("  tune <MHz>         FM tune, e.g. 'radio tune 98.0'\n");
     printf("  tune mw <kHz>      MW tune, e.g. 'radio tune mw 999'\n");
     printf("  tune lw <kHz>      LW tune, e.g. 'radio tune lw 198'\n");
     printf("  seek [up|down]     Seek next FM station\n");
-    printf("  status             Current frequency and signal quality\n");
+    printf("  status             Current frequency and signal level\n");
     printf("  volume <0-255>     Set output level\n");
-    printf("  mute               Mute audio\n");
-    printf("  unmute             Unmute audio\n");
-    printf("  rds                Read one RDS group\n");
+    printf("  mute | unmute      Mute / unmute audio\n");
 }
 
 void cmd_radio(int argc, char **argv)
@@ -626,118 +589,65 @@ void cmd_radio(int argc, char **argv)
         return;
     }
 
-    /* ---- init ---- */
-    if (strcmp(argv[1], "init") == 0)
-    {
-        if (g_radio)
-        {
-            printf("radio: already initialized\n");
-            return;
-        }
-        auto i2c = radio_open_i2c();
-        if (!i2c.is_valid())
-            return;
-
-        g_radio = new Tef6686hn(i2c);
-        long r = g_radio->init();
-        if (r < 0)
-        {
-            printf("radio: init failed (%ld)\n", r);
-            delete g_radio;
-            g_radio = nullptr;
-            return;
-        }
-        printf("radio: TEF6686HN initialized\n");
+    auto radio = radio_cap();
+    if (!radio.is_valid()) {
+        printf("radio: tuner server unavailable\n");
         return;
     }
 
-    if (!g_radio)
+    /* ---- init ---- */
+    if (strcmp(argv[1], "init") == 0)
     {
-        printf("radio: not initialized — run 'radio init' first\n");
+        l4_uint32_t flags = 0;
+        long r = radio->init(flags);
+        if (r != L4_EOK) { printf("radio: init failed (%ld)\n", r); return; }
+        printf("radio: TEF6686HN initialized%s\n", (flags & 1) ? " (sim)" : "");
         return;
     }
 
     /* ---- tune ---- */
     if (strcmp(argv[1], "tune") == 0)
     {
-        if (argc < 3)
-        {
-            printf("Usage: radio tune <MHz>  |  radio tune mw <kHz>  |  radio tune lw <kHz>\n");
+        if (argc < 3) {
+            printf("Usage: radio tune <MHz> | radio tune mw <kHz> | radio tune lw <kHz>\n");
             return;
         }
-
-        Tef6686hn::Band band  = Tef6686hn::Band::FM;
-        l4_uint32_t     freq  = 0;
-
-        if (strcmp(argv[2], "mw") == 0 || strcmp(argv[2], "MW") == 0)
-        {
+        l4_uint32_t band = 0, freq = 0;
+        if (strcmp(argv[2], "mw") == 0 || strcmp(argv[2], "MW") == 0) {
             if (argc < 4) { printf("Usage: radio tune mw <kHz>\n"); return; }
-            band = Tef6686hn::Band::MW;
-            freq = static_cast<l4_uint32_t>(atoi(argv[3]));
-        }
-        else if (strcmp(argv[2], "lw") == 0 || strcmp(argv[2], "LW") == 0)
-        {
+            band = 1; freq = static_cast<l4_uint32_t>(atoi(argv[3]));
+        } else if (strcmp(argv[2], "lw") == 0 || strcmp(argv[2], "LW") == 0) {
             if (argc < 4) { printf("Usage: radio tune lw <kHz>\n"); return; }
-            band = Tef6686hn::Band::LW;
-            freq = static_cast<l4_uint32_t>(atoi(argv[3]));
-        }
-        else
-        {
-            freq = parse_fm_mhz(argv[2]);
+            band = 2; freq = static_cast<l4_uint32_t>(atoi(argv[3]));
+        } else {
+            band = 0; freq = parse_fm_mhz(argv[2]);
         }
 
-        long r = g_radio->tune(band, freq);
-        if (r < 0)
-        {
-            printf("radio: tune failed (%ld)\n", r);
+        l4_uint32_t actual = freq;
+        long r = radio->tune(band, freq, actual);
+        if (r != L4_EOK) {
+            if (r == -L4_EINVAL) printf("radio: not initialized — run 'radio init' first\n");
+            else                 printf("radio: tune failed (%ld)\n", r);
             return;
         }
-
-        l4_usleep(50000); /* 50 ms for AFC to settle */
-
-        if (band == Tef6686hn::Band::FM)
-        {
-            l4_uint32_t actual = 0;
-            g_radio->get_frequency(&actual);
-            printf("radio: tuned to %u.%u MHz\n",
-                   actual / 1000, (actual % 1000) / 100);
-        }
+        if (band == 0)
+            printf("radio: tuned to %u.%u MHz\n", actual / 1000, (actual % 1000) / 100);
         else
-        {
             printf("radio: tuned to %u kHz\n", freq);
-        }
         return;
     }
 
     /* ---- seek ---- */
     if (strcmp(argv[1], "seek") == 0)
     {
-        Tef6686hn::Seek_dir dir = Tef6686hn::Seek_dir::Up;
-        if (argc >= 3 && strcmp(argv[2], "down") == 0)
-            dir = Tef6686hn::Seek_dir::Down;
-
-        printf("radio: seeking %s...\n",
-               dir == Tef6686hn::Seek_dir::Up ? "up" : "down");
-
-        long r = g_radio->seek(dir);
-        if (r == L4_EOK)
-        {
-            l4_uint32_t freq = 0;
-            g_radio->get_frequency(&freq);
-            printf("radio: found %u.%u MHz\n",
-                   freq / 1000, (freq % 1000) / 100);
-            Tef6686hn::Quality q = {};
-            if (g_radio->get_quality(&q) == L4_EOK)
-                radio_print_quality(q);
-        }
-        else if (r == -L4_ENOENT)
-        {
-            printf("radio: no station found\n");
-        }
-        else
-        {
-            printf("radio: seek error (%ld)\n", r);
-        }
+        l4_uint32_t dir = (argc >= 3 && strcmp(argv[2], "down") == 0) ? 1 : 0;
+        printf("radio: seeking %s...\n", dir ? "down" : "up");
+        l4_uint32_t found = 0;
+        long r = radio->seek(dir, found);
+        if (r == L4_EOK)            printf("radio: found %u.%u MHz\n", found / 1000, (found % 1000) / 100);
+        else if (r == -L4_EINVAL)  printf("radio: not initialized — run 'radio init' first\n");
+        else if (r == -L4_ENOENT)  printf("radio: no station found\n");
+        else                       printf("radio: seek error (%ld)\n", r);
         return;
     }
 
@@ -745,15 +655,16 @@ void cmd_radio(int argc, char **argv)
     if (strcmp(argv[1], "status") == 0)
     {
         l4_uint32_t freq = 0;
-        if (g_radio->get_frequency(&freq) == L4_EOK)
-            printf("radio: %u.%u MHz\n",
-                   freq / 1000, (freq % 1000) / 100);
-        else
-            printf("radio: frequency unavailable\n");
-
-        Tef6686hn::Quality q = {};
-        if (g_radio->get_quality(&q) == L4_EOK)
-            radio_print_quality(q);
+        l4_int32_t  rssi = 0;
+        long r = radio->status(freq, rssi);
+        if (r != L4_EOK) {
+            if (r == -L4_EINVAL) printf("radio: not initialized — run 'radio init' first\n");
+            else                 printf("radio: status error (%ld)\n", r);
+            return;
+        }
+        int ra = rssi < 0 ? -rssi : rssi;
+        printf("radio: %u.%u MHz   RSSI %d.%d dBuV\n",
+               freq / 1000, (freq % 1000) / 100, rssi / 10, ra % 10);
         return;
     }
 
@@ -763,61 +674,19 @@ void cmd_radio(int argc, char **argv)
         if (argc < 3) { printf("Usage: radio volume <0-255>\n"); return; }
         int v = atoi(argv[2]);
         if (v < 0 || v > 255) { printf("radio: volume must be 0-255\n"); return; }
-        long r = g_radio->set_output_level(static_cast<l4_uint16_t>(v));
-        if (r < 0)
-            printf("radio: volume set failed (%ld)\n", r);
-        else
-            printf("radio: volume set to %d\n", v);
+        long r = radio->set_volume(static_cast<l4_uint32_t>(v));
+        if (r != L4_EOK) printf("radio: volume set failed (%ld)\n", r);
+        else             printf("radio: volume set to %d\n", v);
         return;
     }
 
     /* ---- mute / unmute ---- */
-    if (strcmp(argv[1], "mute") == 0)
+    if (strcmp(argv[1], "mute") == 0 || strcmp(argv[1], "unmute") == 0)
     {
-        long r = g_radio->mute(true);
-        if (r < 0) printf("radio: mute failed (%ld)\n", r);
-        else        printf("radio: muted\n");
-        return;
-    }
-    if (strcmp(argv[1], "unmute") == 0)
-    {
-        long r = g_radio->mute(false);
-        if (r < 0) printf("radio: unmute failed (%ld)\n", r);
-        else        printf("radio: unmuted\n");
-        return;
-    }
-
-    /* ---- rds ---- */
-    if (strcmp(argv[1], "rds") == 0)
-    {
-        Tef6686hn::Rds_group g = {};
-        long r = g_radio->get_rds_group(&g);
-        if (r < 0)
-        {
-            printf("radio: RDS read error (%ld)\n", r);
-            return;
-        }
-        if (!g.valid)
-        {
-            printf("radio: no RDS data available\n");
-            return;
-        }
-        printf("RDS  A=%04X  B=%04X  C=%04X  D=%04X  err=%02X\n",
-               g.block[0], g.block[1], g.block[2], g.block[3], g.err_bits);
-
-        /* Decode group 0A: programme service name */
-        unsigned group_type  = (g.block[1] >> 12) & 0xF;
-        unsigned version_bit = (g.block[1] >> 11) & 0x1;
-        if (group_type == 0 && !version_bit)
-        {
-            unsigned seg = g.block[1] & 0x03;
-            char c0 = static_cast<char>(g.block[3] >> 8);
-            char c1 = static_cast<char>(g.block[3] & 0xFF);
-            printf("     PS[%u%u] = '%c%c'\n",
-                   seg * 2, seg * 2 + 1,
-                   (c0 >= 0x20 && c0 < 0x7F) ? c0 : '?',
-                   (c1 >= 0x20 && c1 < 0x7F) ? c1 : '?');
-        }
+        l4_uint32_t on = (strcmp(argv[1], "mute") == 0) ? 1 : 0;
+        long r = radio->mute(on);
+        if (r != L4_EOK) printf("radio: %s failed (%ld)\n", on ? "mute" : "unmute", r);
+        else             printf("radio: %s\n", on ? "muted" : "unmuted");
         return;
     }
 
