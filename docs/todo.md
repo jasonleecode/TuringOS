@@ -109,7 +109,8 @@ Shell 完全不支持 `cmd1 | cmd2`。根本原因：
 | /proc / /sys | [✓] | 合成只读 VFS（pkg/procfs，链入 native_shell，读时生成）：/proc/{uptime,meminfo,version,cpuinfo,tasks}、/sys/{cpu_online,version}（2026-06-09）|
 
 **缺口 3 已完整闭合**（2026-06-09）。剩余皆为增量：tmpfs 后续（容量上限 / 跨进程共享 / 通用挂载到 l4re Vfs 构造）、其他块设备挂 ext4。
-战略优先级见上方进度小结：缺口 **2（管道）/ 4（Shell）/ 6（安全）** + 已推后的 **P0 调度崩溃**。
+战略优先级见上方进度小结：**P0 调度崩溃已于 2026-06-09 修复**（地基裂缝补上）；当前敞着的结构性
+缺口为 **2（管道）/ 4（Shell）/ 6（安全）**——这是接下来的主攻方向。
 
 #### 缺口 4：Shell 功能残缺
 
@@ -171,6 +172,14 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 行；崩溃签名仅用 `schedule_in_progress` / JDB 进入横幅等专属 token。建议每次动
 调度器 / spawnd / `Switch_lock` 后跑一轮，并定期 `-n 50+` 测长期崩溃率（概率缺陷，
 单次通过不证明已修复）。
+
+**⚠️ 门禁现状（2026-06-09）— 待迁移**：定位 P0 时用新工具 `tools/smp_crash_rate.sh`
+（崩溃率矩阵测量器，扫 workload×smp 网格）量化发现：**spawn-bench 门禁现已基本看不见
+这个 bug**——spawn smp2/smp4 各 100 轮 **0/200 全过**，而**登录提示符击键风暴** smp1/smp2
+各 100 轮在修复前 **100% 必崩**（且 `-smp 1` 单核亦崩，推翻"SMP-only"旧定性）。即现有
+`ci_smp_smoke.sh`（spawn）对这条已知 100% 复现的崩溃形同虚设。**待做**：把 `ci_smp_smoke.sh`
+的工作负载换成/补上 login 击键风暴（复用 `smp_crash_rate.sh` 的 `feed_login` 手法），否则
+门禁守不住此 P0 的回归。修复后全量 soak：login+spawn 各格 100 轮＝ **400/400 全过 0 崩**。
 
 **P1 cd 概率卡死 — 已修复（2026-06-08）**：根因是 VFS 层 `meta_probe` / `Env_dir::check_type`
 （`l4re/l4re_vfs/include/impl/ns_fs_impl.h`）对 initial_caps 发 Meta IPC 时，*发送*超时虽
