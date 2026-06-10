@@ -285,6 +285,20 @@ void sys_check_core_locking(void);
 /* Avoid clash with same definition in uclibc */
 #define IF_NAMESIZE 16
 
+/*
+   ------------------------------------
+   ----------- altcp / TLS ------------
+   ------------------------------------
+*/
+/* Application-layered TCP + TLS via mbedTLS (pkg/mbedtls), unlocking mqtts /
+ * https. The altcp_tls_mbedtls glue is compiled into liblwip (see lib/Makefile).
+ * NOTE: the mbedTLS entropy backend is currently a WEAK software source — see
+ * pkg/mbedtls/lib/entropy_l4.c; not for production until a real per-board source
+ * (virtio-rng / RNGB) is wired in. */
+#define LWIP_ALTCP                      1
+#define LWIP_ALTCP_TLS                  1
+#define LWIP_ALTCP_TLS_MBEDTLS          1
+
 #ifdef __cplusplus
 }
 #endif

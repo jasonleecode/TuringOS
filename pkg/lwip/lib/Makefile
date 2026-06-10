@@ -4,11 +4,15 @@ L4DIR           ?= $(PKGDIR)/../../..
 TARGET	         = liblwip.a liblwip.so
 LINK_INCR        = liblwip.a
 PC_FILENAME      = lwip
-REQUIRES_LIBS    = libpthread
+REQUIRES_LIBS    = libpthread mbedtls
 CONTRIB_INCDIR   = lwip \
                    lwip/contrib/src/include \
                    lwip/contrib/contrib/ports/unix/port/include
-DEFINES          = -DLWIP_L4=1 -D_DEFAULT_SOURCE
+DEFINES          = -DLWIP_L4=1 -D_DEFAULT_SOURCE \
+                   -DMBEDTLS_CONFIG_FILE='<mbedtls_l4_config.h>'
+# mbedTLS headers (vendored in pkg/mbedtls) for the altcp_tls glue below.
+PRIVATE_INCDIR  += $(PKGDIR)/../mbedtls/lib/contrib/include \
+                   $(PKGDIR)/../mbedtls/lib
 
 LWIPDIR          = contrib/src
 include $(PKGDIR)/lib/$(LWIPDIR)/Filelists.mk
@@ -16,6 +20,8 @@ include $(PKGDIR)/lib/$(LWIPDIR)/Filelists.mk
 SRC_C            = $(filter-out contrib/src/netif/slipif.c \
                                 contrib/src/core/ipv6/inet6.c,$(LWIPNOAPPSFILES)) \
                    $(LWIPDIR)/apps/mqtt/mqtt.c \
+                   $(LWIPDIR)/apps/altcp_tls/altcp_tls_mbedtls.c \
+                   $(LWIPDIR)/apps/altcp_tls/altcp_tls_mbedtls_mem.c \
                    contrib/contrib/ports/unix/port/perf.c \
                    contrib/contrib/ports/unix/port/sys_arch.c
 SRC_CC           = l4libinit.cc

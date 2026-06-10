@@ -233,8 +233,10 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 |------|------|
 | [✓] | MQTT 客户端（`libnc_mqtt`，`mqtt pub\|sub <broker> <topic> [msg\|secs]`）：编入 lwIP `apps/mqtt`，明文 QoS0，连接/发布回调跑在 tcpip 线程→命令线程轮询标志；所有 `mqtt_*` 调用持 `LOCK_TCPIP_CORE`。QEMU 验证：向主机 Python broker stub `PUBLISH turingos/test hello_from_turingos` 成功 |
 | [✓] | telnet 服务（`libnc_telnet` + `cmd_telnet.cc`，`telnetd [port]`）：单前台会话，`dup2(sock, STDOUT)` 复用全部 shell 命令，剥离 IAC，行模式分发。QEMU 验证：主机 telnet 客户端经 hostfwd 远程跑 `uname`/`uptime`/`exit` 回显正常 |
-| 待做 | TLS/crypto 后端（移植 mbedTLS 接 lwIP `altcp_tls`）——mqtts / https / **ssh** 的共同前提，列为独立里程碑 |
-| 待做 | telnetd 并发多会话（需解决 STDOUT 多路复用）；HTTP 客户端 |
+| [✓] | **TLS/crypto 后端（mbedTLS 2.28 → lwIP altcp_tls，2026-06-10）**：移植 mbedTLS 2.28.10 LTS 为 L4Re 库 `pkg/mbedtls`（vendored `library/*.c`，剔除 net_sockets；`mbedtls_l4_config.h` 关 FS_IO/NET_C/TIMING_C/PSA、开 ENTROPY_HARDWARE_ALT）；lwIP 开 `LWIP_ALTCP_TLS_MBEDTLS` + 编入 altcp_tls glue；mqtt 加 `pubs`/`subs`（TLS :8883，no-verify 首版）。QEMU 验证：向主机 TLS broker 完成 `TLSv1.2 ECDHE-RSA-AES256-GCM-SHA384` 握手 + `PUBLISH turingos/test hello_tls`，guest `connected (TLS)`/`published`，无崩溃 |
+| 待做 | **真熵源**（首版熵＝弱软件 jitter，`pkg/mbedtls/lib/entropy_l4.c`，标注勿用于生产）：可插拔后端，按板补 virt→virtio-rng 客户端驱动 / imx6ul→RNGB 硬件 TRNG / BBB→jitter+ADC |
+| 待做 | TLS **证书校验**（首版 no-verify，CA=NULL；需 CA 供给）；mbedTLS 头文件正式 export（现 net-cluster 用 PRIVATE_INCDIR 直连）；**ssh**（有 TLS 后可上）；HTTP/https 客户端 |
+| 待做 | telnetd 并发多会话（需解决 STDOUT 多路复用） |
 
 ### 串口通信
 

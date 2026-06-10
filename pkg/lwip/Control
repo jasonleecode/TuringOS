@@ -1,3 +1,3 @@
 provides: lwip libc_be_socket_lwip lwip_virtio_net lwip_ifconfig_env
-requires: libc libl4re-vfs libstdc++ l4virtio
+requires: libc libl4re-vfs libstdc++ l4virtio mbedtls
 Maintainer: adam@l4re.org

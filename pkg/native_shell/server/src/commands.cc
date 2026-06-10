@@ -65,7 +65,7 @@ shell_cmd commands[] = {
     { "nslookup",   "DNS lookup  <hostname>",                              cmd_nslookup },
     { "udp",        "Start UDP echo server on port 5001",                  cmd_udp      },
     /* net-cluster — outward connectivity */
-    { "mqtt",       "MQTT client  pub|sub <broker> <topic> [msg|secs]",    cmd_mqtt     },
+    { "mqtt",       "MQTT client  pub|sub|pubs|subs <broker> <topic> [..]  (s=TLS)", cmd_mqtt },
     { "telnetd",    "Telnet server (single session)  [port]",              cmd_telnetd  },
 };
 

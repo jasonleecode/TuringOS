@@ -14,6 +14,7 @@
 #include <lwip/tcpip.h>
 #include <lwip/ip_addr.h>
 #include <lwip/sys.h>
+#include <lwip/altcp_tls.h>
 
 #include <cstdio>
 #include <cstring>
@@ -62,11 +63,20 @@ void cmd_mqtt(int argc, char **argv)
 {
   if (!net_is_ready()) { printf("mqtt: network not ready\n"); return; }
   if (argc < 4) {
-    printf("usage: mqtt pub <broker_ip> <topic> <message>\n"
-           "       mqtt sub <broker_ip> <topic> [seconds]\n");
+    printf("usage: mqtt pub  <broker_ip> <topic> <message>   (plaintext :1883)\n"
+           "       mqtt sub  <broker_ip> <topic> [seconds]\n"
+           "       mqtt pubs <broker_ip> <topic> <message>   (TLS :8883)\n"
+           "       mqtt subs <broker_ip> <topic> [seconds]\n");
     return;
   }
-  const char *op     = argv[1];
+  /* pubs/subs = TLS variants of pub/sub (port 8883). */
+  char op[8];
+  strncpy(op, argv[1], sizeof(op) - 1);
+  op[sizeof(op) - 1] = '\0';
+  bool tls = (strcmp(op, "pubs") == 0 || strcmp(op, "subs") == 0);
+  if (tls) op[strlen(op) - 1] = '\0';      // pubs->pub, subs->sub
+  const u16_t port = tls ? 8883 : 1883;
+
   const char *broker = argv[2];
   const char *topic  = argv[3];
 
@@ -87,35 +97,58 @@ void cmd_mqtt(int argc, char **argv)
   info.client_id  = "turingos";
   info.keep_alive = 60;
 
+  /* TLS: a no-verify client config (CA=NULL) for the first cut — proves the
+   * handshake; certificate verification is a follow-up.  The config owns the
+   * entropy/DRBG context (expensive to set up) and must outlive every
+   * connection that references it; altcp_tls's intended use is a long-lived
+   * config.  So create it ONCE and keep it for the process lifetime — never
+   * free it (freeing it while a TLS close is still in flight crashes).
+   * altcp_tls_create_config_client mem_mallocs via lwIP — hold the core lock. */
+  static struct altcp_tls_config *s_tlscfg = nullptr;
+  if (tls) {
+    if (!s_tlscfg) {
+      LOCK_TCPIP_CORE();
+      s_tlscfg = altcp_tls_create_config_client(nullptr, 0);
+      UNLOCK_TCPIP_CORE();
+    }
+    if (!s_tlscfg) { printf("mqtt: TLS config alloc failed\n"); return; }
+    info.tls_config = s_tlscfg;
+  }
+
   /* Every lwIP mqtt_* call asserts the TCPIP core lock is held; only the
    * poll-sleeps below run unlocked (holding it would stall the tcpip thread). */
-  printf("mqtt: connecting to %s:1883 ...\n", broker);
+  printf("mqtt: connecting to %s:%d %s...\n", broker, port, tls ? "(TLS) " : "");
   LOCK_TCPIP_CORE();
   mqtt_client_t *cl = mqtt_client_new();
   err_t e = ERR_MEM;
   if (cl) {
-    e = mqtt_client_connect(cl, &bip, 1883, conn_cb, &ctx, &info);
+    e = mqtt_client_connect(cl, &bip, port, conn_cb, &ctx, &info);
     if (strcmp(op, "sub") == 0)
       mqtt_set_inpub_callback(cl, inpub_cb, indata_cb, &ctx);
   }
   UNLOCK_TCPIP_CORE();
 
-  if (!cl) { printf("mqtt: client alloc failed\n"); return; }
+  if (!cl) {
+    printf("mqtt: client alloc failed\n");
+    return;
+  }
   if (e != ERR_OK) {
     printf("mqtt: connect call failed (%d)\n", (int)e);
     LOCK_TCPIP_CORE(); mqtt_client_free(cl); UNLOCK_TCPIP_CORE();
     return;
   }
 
-  /* Wait for the CONNACK (callback on tcpip thread). */
-  for (int waited = 0; ctx.conn_status == -2 && waited < 5000; waited += 100)
+  /* Wait for the CONNACK (callback on tcpip thread). TLS handshake adds a few
+   * round-trips, so allow longer than the plaintext path. */
+  const int conn_timeout = tls ? 12000 : 5000;
+  for (int waited = 0; ctx.conn_status == -2 && waited < conn_timeout; waited += 100)
     sys_msleep(100);
   if (ctx.conn_status != MQTT_CONNECT_ACCEPTED) {
     printf("mqtt: connect failed (status=%d)\n", ctx.conn_status);
     LOCK_TCPIP_CORE(); mqtt_disconnect(cl); mqtt_client_free(cl); UNLOCK_TCPIP_CORE();
     return;
   }
-  printf("mqtt: connected\n");
+  printf("mqtt: connected%s\n", tls ? " (TLS)" : "");
 
   if (strcmp(op, "pub") == 0) {
     const char *msg = (argc > 4) ? argv[4] : "";
