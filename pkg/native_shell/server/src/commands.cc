@@ -11,6 +11,7 @@
 #include <pthread.h>
 
 #include <l4/re/env>
+#include <l4/re/namespace>
 #include <l4/re/util/cap_alloc>
 #include <l4/sys/factory>
 #include <ext4_file_proto.h>
@@ -511,14 +512,39 @@ void cmd_uptime(int argc, char **argv)
 /* Hardware commands                                                    */
 /* ------------------------------------------------------------------ */
 
-/* Client of the ds18b20-server (driver-framework Phase 0): the DS18B20 driver
- * runs as its own task; we just call the Temp_svr protocol over the "temp"
- * cap that ned wired to that server. */
+/* Resolve a driver by name from the shared "dev" registry (driver-framework
+ * Phase 2): drivers self-register their service gate, and we look them up by
+ * name instead of ned hard-wiring a per-driver cap.  Cached per type so we
+ * query the namespace only once. */
+template<typename T>
+static L4::Cap<T> dev_lookup(char const *name)
+{
+    static L4::Cap<T> cached;
+    if (cached.is_valid())
+        return cached;
+
+    auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
+    if (!dev.is_valid())
+        return L4::Cap<T>::Invalid;
+
+    auto slot = L4Re::Util::cap_alloc.alloc<T>();
+    if (!slot.is_valid())
+        return L4::Cap<T>::Invalid;
+    if (dev->query(name, slot) < 0) {
+        L4Re::Util::cap_alloc.free(slot);
+        return L4::Cap<T>::Invalid;
+    }
+    cached = slot;
+    return cached;
+}
+
+/* Client of the ds18b20-server: resolve it via the "dev" registry, then call
+ * the Temp_svr protocol over IPC. */
 void cmd_temp(int argc, char **argv)
 {
     (void)argc; (void)argv;
 
-    auto temp = L4Re::Env::env()->get_cap<Temp_svr>("temp");
+    auto temp = dev_lookup<Temp_svr>("temp0");
     if (!temp.is_valid()) {
         printf("temp: sensor server unavailable\n");
         return;
@@ -548,7 +574,7 @@ void cmd_temp(int argc, char **argv)
  * so it persists across separate `radio` command invocations. */
 static L4::Cap<Radio_svr> radio_cap()
 {
-    return L4Re::Env::env()->get_cap<Radio_svr>("radio");
+    return dev_lookup<Radio_svr>("radio0");
 }
 
 /* Parse FM frequency string "98.0" or "98" → kHz (98000). */

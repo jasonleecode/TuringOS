@@ -16,6 +16,7 @@
 #include <cstdio>
 
 #include <l4/re/env>
+#include <l4/re/namespace>
 #include <l4/re/util/cap_alloc>
 #include <l4/re/util/br_manager>
 #include <l4/re/util/object_registry>
@@ -158,14 +159,22 @@ int main()
 {
   printf("[tef6686hn-server] starting\n");
 
+  /* Self-allocate a service gate and publish it in the shared "dev" registry
+   * under our device name (clients discover us by name). */
   static Radio_impl impl;
-  if (!server.registry()->register_obj(&impl, "svr").is_valid())
+  auto gate = server.registry()->register_obj(&impl);
+  if (!gate.is_valid())
     {
-      printf("[tef6686hn-server] ERROR: 'svr' capability not found — exiting\n");
+      printf("[tef6686hn-server] ERROR: cannot allocate service gate — exiting\n");
       return 1;
     }
 
-  printf("[tef6686hn-server] ready\n");
+  auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
+  if (dev.is_valid() && dev->register_obj("radio0", gate) >= 0)
+    printf("[tef6686hn-server] registered as dev/radio0\n");
+  else
+    printf("[tef6686hn-server] WARN: 'dev' registry unavailable — not discoverable\n");
+
   server.loop();
   return 0;
 }

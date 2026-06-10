@@ -16,6 +16,7 @@
 #include <cstdio>
 
 #include <l4/re/env>
+#include <l4/re/namespace>
 #include <l4/re/util/br_manager>
 #include <l4/re/util/object_registry>
 #include <l4/sys/cxx/ipc_epiface>
@@ -95,14 +96,24 @@ int main()
   else
     printf("[ds18b20-server] no 'vbus' cap — simulated mode\n");
 
+  /* Self-allocate a service gate (no ned-provided "svr" cap needed) and
+   * publish it in the shared "dev" registry under our device name, so clients
+   * discover us by name instead of ned hard-wiring a per-driver cap. */
   static Temp_impl impl(sensor);
-  if (!server.registry()->register_obj(&impl, "svr").is_valid())
+  auto gate = server.registry()->register_obj(&impl);
+  if (!gate.is_valid())
     {
-      printf("[ds18b20-server] ERROR: 'svr' capability not found — exiting\n");
+      printf("[ds18b20-server] ERROR: cannot allocate service gate — exiting\n");
       return 1;
     }
 
-  printf("[ds18b20-server] ready (%s)\n", sensor ? "real sensor" : "simulated");
+  auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
+  if (dev.is_valid() && dev->register_obj("temp0", gate) >= 0)
+    printf("[ds18b20-server] registered as dev/temp0 (%s)\n",
+           sensor ? "real sensor" : "simulated");
+  else
+    printf("[ds18b20-server] WARN: 'dev' registry unavailable — not discoverable\n");
+
   server.loop();
   return 0;
 }
