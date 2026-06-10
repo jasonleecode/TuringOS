@@ -66,4 +66,10 @@ Io.add_vbusses {
   vbus_input = Io.Vi.System_bus(function()
     DEVS = wrap(hw:match("turingos,input"))
   end),
+
+  -- ds18b20-server gets a GPIO bus.  QEMU virt has no GPIO controller wired
+  -- here, so this bus is empty and the server falls back to simulated readings.
+  -- On real hardware (e.g. BBB) add the GPIO device to this bus.
+  vbus_gpio = Io.Vi.System_bus(function()
+  end),
 }

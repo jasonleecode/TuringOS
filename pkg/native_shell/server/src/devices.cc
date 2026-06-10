@@ -6,12 +6,9 @@
 #include <l4/re/env>
 #include <l4/re/util/cap_alloc>
 #include <l4/sys/factory>
-#include <l4/vbus/vbus>
-#include <l4/vbus/vbus_gpio>
 
 #include <stdio.h>
 
-#include "dev_temp.h"
 #include "dev_rtc.h"
 #include "dev_radio.h"
 
@@ -20,20 +17,9 @@ void setup_devices()
   /* /dev/rtc0 — always try; works via CLOCK_REALTIME even without RTC cap */
   Devfs::register_device("rtc0", cxx::make_ref_obj<Rtc_device_file>());
 
-  /* /dev/temp0 — DS18B20 on GPIO pin 4 (requires vbus with GPIO) */
-  {
-    auto vbus = L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus");
-    if (vbus.is_valid()) {
-      L4vbus::Device gpio_dev;
-      if (vbus->root().device_by_hid(&gpio_dev, "gpio") >= 0) {
-        Devfs::register_device(
-          "temp0",
-          cxx::make_ref_obj<Temp_device_file>(L4vbus::Gpio_pin(gpio_dev, 4)));
-      } else {
-        printf("devfs: GPIO not found on vbus, /dev/temp0 not registered\n");
-      }
-    }
-  }
+  /* /dev/temp0 — the DS18B20 driver now runs as its own task (ds18b20-server);
+   * the `temp` command is an IPC client of it.  Re-exposing it as a cap-backed
+   * devfs node is a later phase (devfs <-> driver registry). */
 
   /* /dev/radio0 — TEF6686HN on I2C (requires 'i2c' factory cap) */
   {

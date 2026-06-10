@@ -317,11 +317,23 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 - `push_initial_caps` / `map_initial_caps`：将 native_shell 的所有命名 cap（fb、input、sigma0、rtc 等）透传给子任务，使子任务无需 ned 即可访问硬件服务
 - **注（2026-05-07）**：`module hello` 曾在添加 fb-drv 时意外从 native-shell entry 中删除，导致 `run hello` 报 `open_file: 'hello' not found`，已在 modules.list 中补回
 
+### 驱动框架（微内核设备模型）
+
+把驱动从"库静态链进 native_shell 的巨石"重构成 **C 驱动服务器 / A 设备管理器 / B 注册表+自省** 三层（不照搬 Linux 内核态驱动核；微内核里驱动=用户态服务器+IPC+cap）。
+
+| 状态 | 子任务 |
+|------|------|
+| [✓] | **Phase 0（2026-06-10）：ds18b20 抽成独立 `ds18b20-server`**——协议头 `Temp_svr`（`L4::Kobject_t<…,0x5902>` + `read_temp_c100` RPC）、`Epiface` 服务器（`Registry_server`，仿 spawnd）、ned 只给 `{svr, vbus}`（隔离，对比 shell 全量 cap）、native_shell `temp` 改 IPC 客户端、去 ds18b20 lib 链接。QEMU 验证：`temp` 读出活值 `25.xx °C (sim)`（真 IPC 往返）、驱动独立 task、无回归。砍了安全缺口 6 一角 |
+| 待做 | Phase 1：radio(tef6686hn) 迁服务器 + 把 Temp_svr 提炼成通用 **sensor class 协议**（独立 header 包） |
+| 待做 | Phase 2：**dev Namespace 注册表**（驱动注册、shell 查名拿 cap，不再 ned 写死） |
+| 待做 | Phase 3：**device-manager**——枚举 vbus + match → 用 spawnd 动态启动驱动 + 转交 cap（probe/bind） |
+| 待做 | Phase 4：procfs 扩 **/sys/devices** 统一自省 + hotplug |
+
 ### 传感器 / 外设驱动
 
 | 状态 | 子任务 |
 |------|------|
-| [✓] | DS18B20 温度传感器（`temp` 命令，GPIO 1-Wire） |
+| [✓] | DS18B20 温度传感器（`temp` 命令 → ds18b20-server IPC，见上「驱动框架 Phase 0」；1-Wire/GPIO） |
 | [✓] | TEF6686HN FM 收音机（`radio` 命令，I2C） |
 | [✓] | MCP2515 CAN 控制器（SPI） |
 | [✓] | AT24C02 EEPROM（I2C） |

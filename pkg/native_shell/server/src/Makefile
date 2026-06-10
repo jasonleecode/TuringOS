@@ -3,9 +3,11 @@ L4DIR		?= $(PKGDIR)/../..
 
 TARGET		= native_shell
 SRC_CC		= main.cc commands.cc cmd_net.cc cmd_ping.cc cmd_telnet.cc \
-		  devices.cc dev_temp.cc dev_rtc.cc dev_radio.cc \
+		  devices.cc dev_rtc.cc dev_radio.cc \
 		  shell_exec.cc cmd_top.cc
-REQUIRES_LIBS	= readline rtc rtc_libc_be ds18b20 tef6686hn \
+# ds18b20 lib dropped: the temp driver now runs as ds18b20-server and the
+# `temp` command is an IPC client (Temp_svr protocol header only, no lib link).
+REQUIRES_LIBS	= readline rtc rtc_libc_be tef6686hn \
 		  lwip libc_be_socket_lwip libio-vbus libstdc++ l4util libsigma0 \
 		  devfs libloader ext4_client libklog tmpfs procfs \
 		  nc_mqtt nc_telnet
@@ -13,7 +15,8 @@ REQUIRES_LIBS	= readline rtc rtc_libc_be ds18b20 tef6686hn \
 PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include \
                    $(SRC_DIR)/../../../filesystem/ext4/include \
                    $(SRC_DIR)/../../../net-cluster/protocol/mqtt \
-                   $(SRC_DIR)/../../../net-cluster/protocol/telnet
+                   $(SRC_DIR)/../../../net-cluster/protocol/telnet \
+                   $(SRC_DIR)/../../../ds18b20/include
 
 # Force linker to pull in the client TUs that self-register with the VFS:
 # ext4_client registers its File_factory; tmpfs mounts /tmp; procfs mounts

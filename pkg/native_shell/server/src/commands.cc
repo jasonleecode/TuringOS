@@ -16,9 +16,7 @@
 #include <ext4_file_proto.h>
 #include <l4/rtc/rtc.h>
 #include <l4/util/util.h>
-#include <l4/vbus/vbus>
-#include <l4/vbus/vbus_gpio>
-#include <l4/ds18b20/ds18b20.h>
+#include <temp_proto.h>           /* ds18b20-server protocol (via PRIVATE_INCDIR) */
 #include <l4/tef6686hn/tef6686hn.h>
 
 #include "commands.h"
@@ -513,39 +511,31 @@ void cmd_uptime(int argc, char **argv)
 /* Hardware commands                                                    */
 /* ------------------------------------------------------------------ */
 
+/* Client of the ds18b20-server (driver-framework Phase 0): the DS18B20 driver
+ * runs as its own task; we just call the Temp_svr protocol over the "temp"
+ * cap that ned wired to that server. */
 void cmd_temp(int argc, char **argv)
 {
-    int pin = 4;
-    if (argc >= 2)
-        pin = atoi(argv[1]);
+    (void)argc; (void)argv;
 
-    auto vbus = L4Re::Env::env()->get_cap<L4vbus::Vbus>("vbus");
-    if (!vbus) {
-        printf("temp: 'vbus' capability not available\n");
+    auto temp = L4Re::Env::env()->get_cap<Temp_svr>("temp");
+    if (!temp.is_valid()) {
+        printf("temp: sensor server unavailable\n");
         return;
     }
 
-    L4vbus::Device gpio_dev;
-    if (vbus->root().device_by_hid(&gpio_dev, "gpio") < 0) {
-        printf("temp: GPIO device not found on vbus\n");
-        return;
-    }
-
-    Ds18b20 sensor(L4vbus::Gpio_pin(gpio_dev, pin));
-    if (!sensor.present()) {
-        printf("temp: no device on GPIO pin %d\n", pin);
-        return;
-    }
-
-    int temp_c100;
-    if (sensor.read_temp_c100(&temp_c100) != L4_EOK) {
-        printf("temp: read failed\n");
+    int         temp_c100 = 0;
+    l4_uint32_t flags      = 0;
+    long r = temp->read_temp_c100(temp_c100, flags);
+    if (r != L4_EOK) {
+        printf("temp: read failed (%ld)\n", r);
         return;
     }
 
     bool neg   = temp_c100 < 0;
     int  abs_v = neg ? -temp_c100 : temp_c100;
-    printf("%s%d.%02d °C\n", neg ? "-" : "", abs_v / 100, abs_v % 100);
+    printf("%s%d.%02d °C%s\n", neg ? "-" : "", abs_v / 100, abs_v % 100,
+           (flags & 1) ? " (sim)" : "");
 }
 
 /* ------------------------------------------------------------------ */
