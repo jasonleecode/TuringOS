@@ -56,5 +56,14 @@ struct Net_svr : L4::Kobject_t<Net_svr, L4::Kobject, 0x5904>
   /* Close a connection handle. */
   L4_INLINE_RPC(long, close, (l4_uint32_t handle));
 
-  typedef L4::Typeid::Rpcs<tcp_connect_t, send_t, recv_t, close_t> Rpcs;
+  /*
+   * Report the network interface(s) as preformatted, human-readable text
+   * (ifconfig-style: flags, mtu, inet/netmask/broadcast, gateway, ether).
+   *   out text: the formatted listing (empty if the stack isn't up)
+   * netd owns lwIP, so clients (e.g. the `ifconfig` tool) don't need it.
+   */
+  L4_INLINE_RPC(long, ifconfig, (L4::Ipc::Array<char> &text));
+
+  typedef L4::Typeid::Rpcs<tcp_connect_t, send_t, recv_t, close_t,
+                           ifconfig_t> Rpcs;
 };

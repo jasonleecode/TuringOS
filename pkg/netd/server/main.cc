@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
+#include <cstdarg>
 #include <cerrno>
 #include <set>
 
@@ -842,10 +843,71 @@ public:
     return L4_EOK;
   }
 
+  long op_ifconfig(Net_svr::Rights, L4::Ipc::Array_ref<char> &text)
+  {
+    int o = 0;
+    auto app = [&](const char *fmt, ...) __attribute__((format(printf, 2, 3)))
+    {
+      if (o >= (int)sizeof(_ifbuf)) return;
+      va_list ap; va_start(ap, fmt);
+      int w = vsnprintf(_ifbuf + o, sizeof(_ifbuf) - o, fmt, ap);
+      va_end(ap);
+      if (w > 0) o += w;
+    };
+
+    LOCK_TCPIP_CORE();
+    if (!g_net_stack_ready || netif_list == nullptr)
+      {
+        UNLOCK_TCPIP_CORE();
+        text = L4::Ipc::Array_ref<char>(0, _ifbuf);
+        return L4_EOK;
+      }
+
+    for (struct netif *nif = netif_list; nif; nif = nif->next)
+      {
+        char flags[64] = {}; char *fp = flags; unsigned fval = 0;
+        if (nif->flags & NETIF_FLAG_UP)        { fval |= 0x0001; fp += snprintf(fp, 16, "UP,"); }
+        if (nif->flags & NETIF_FLAG_BROADCAST) { fval |= 0x0002; fp += snprintf(fp, 16, "BROADCAST,"); }
+        if (nif->flags & NETIF_FLAG_LINK_UP)   { fval |= 0x0040; fp += snprintf(fp, 16, "RUNNING,"); }
+        if (nif->flags & NETIF_FLAG_ETHARP)    { fval |= 0x1000; fp += snprintf(fp, 16, "MULTICAST,"); }
+        if (fp > flags) *(fp - 1) = '\0';
+
+        app("%c%c%u: flags=%04x<%s>  mtu %u\n",
+            nif->name[0], nif->name[1], (unsigned)nif->num, fval, flags,
+            (unsigned)nif->mtu);
+
+        const ip4_addr_t *ip = netif_ip4_addr(nif);
+        const ip4_addr_t *nm = netif_ip4_netmask(nif);
+        const ip4_addr_t *gw = netif_ip4_gw(nif);
+        if (!ip4_addr_isany(ip))
+          {
+            ip4_addr_t bc; bc.addr = ip->addr | ~nm->addr;
+            char ips[16], nms[16], bcs[16], gws[16];
+            snprintf(ips, sizeof(ips), "%s", ip4addr_ntoa(ip));
+            snprintf(nms, sizeof(nms), "%s", ip4addr_ntoa(nm));
+            snprintf(bcs, sizeof(bcs), "%s", ip4addr_ntoa(&bc));
+            snprintf(gws, sizeof(gws), "%s", ip4addr_ntoa(gw));
+            app("        inet %s  netmask %s  broadcast %s\n", ips, nms, bcs);
+            app("        gateway %s\n", gws);
+          }
+        if (nif->hwaddr_len == 6)
+          app("        ether %02x:%02x:%02x:%02x:%02x:%02x\n",
+              nif->hwaddr[0], nif->hwaddr[1], nif->hwaddr[2],
+              nif->hwaddr[3], nif->hwaddr[4], nif->hwaddr[5]);
+      }
+    UNLOCK_TCPIP_CORE();
+
+    if (o > (int)sizeof(_ifbuf)) o = sizeof(_ifbuf);
+    text = L4::Ipc::Array_ref<char>((unsigned short)o, _ifbuf);
+    return L4_EOK;
+  }
+
 private:
   /* Recv staging buffer.  Sized for the inline IPC message-register budget
    * (UTCB), which caps a single reply at well under 2 KiB. */
   char _rxbuf[1600];
+  /* ifconfig text buffer (same UTCB budget). */
+  char _ifbuf[1024];
 };
 
 } // namespace

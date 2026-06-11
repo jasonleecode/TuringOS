@@ -58,7 +58,6 @@ shell_cmd commands[] = {
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
     /* network */
     { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net      },
-    { "ifconfig",   "Show network interfaces and IP info",                  cmd_ifconfig },
     { "dhcp",       "Acquire IP via DHCP  [release]",                       cmd_dhcp     },
     { "ping",       "ICMP ping  <host> [-c count]",                        cmd_ping     },
     { "nslookup",   "DNS lookup  <hostname>",                              cmd_nslookup },

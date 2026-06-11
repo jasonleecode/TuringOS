@@ -48,7 +48,8 @@ void cmd_radio(int argc, char **argv);
 
 /* network */
 void cmd_net(int argc, char **argv);
-void cmd_ifconfig(int argc, char **argv);
+/* ifconfig moved out of the shell: it is now a standalone netd client program
+ * (pkg/net-cluster/tools/ifconfig), run via `run rom/ifconfig`. */
 void cmd_dhcp(int argc, char **argv);
 void cmd_ping(int argc, char **argv);
 void cmd_nslookup(int argc, char **argv);
