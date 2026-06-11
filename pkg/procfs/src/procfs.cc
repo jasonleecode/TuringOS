@@ -449,6 +449,31 @@ static const Gen_node proc_nodes[] = {
   { "tasks",   gen_tasks   },
 };
 
+// ---------------------------------------------------------------------------
+// /svc — the service daemons.  These are opaque service-gate caps that are no
+// longer listed loose at the environment root (see Env_dir::getdents); /svc is
+// their categorised, browsable view.  Each entry reports the service, its IPC
+// protocol, and whether the cap is currently present.
+// ---------------------------------------------------------------------------
+static int svc_line(char *buf, int n, const char *name,
+                    const char *proto, const char *capname)
+{
+  bool up = L4Re::Env::env()->get_cap<void>(capname).is_valid();
+  return snprintf(buf, n, "%-8s %-16s %s\n", name, proto, up ? "up" : "absent");
+}
+static int gen_svc_authd(char *b, int n)
+{ return svc_line(b, n, "authd",   "Auth_svr/0x5905",  "authd");   }
+static int gen_svc_spawnd(char *b, int n)
+{ return svc_line(b, n, "spawnd",  "Spawn_svr/0x5901", "spawnd");  }
+static int gen_svc_syslogd(char *b, int n)
+{ return svc_line(b, n, "syslogd", "Klog_svr/0x5900",  "syslogd"); }
+
+static const Gen_node svc_nodes[] = {
+  { "authd",   gen_svc_authd   },
+  { "spawnd",  gen_svc_spawnd  },
+  { "syslogd", gen_svc_syslogd },
+};
+
 static const Gen_node sys_nodes[] = {
   { "cpu_online", gen_cpu_online },
   { "version",    gen_version    },
@@ -469,6 +494,10 @@ struct Procfs_init
     Ref_ptr<File> s = cxx::make_ref_obj<Gen_dir>(
         sys_nodes, sizeof(sys_nodes) / sizeof(sys_nodes[0]), "devices", dev);
     if (s) L4Re::Vfs::vfs_ops->mount("sys", s);
+    // /svc — the categorised view of the service-daemon caps.
+    Ref_ptr<File> v = cxx::make_ref_obj<Gen_dir>(
+        svc_nodes, sizeof(svc_nodes) / sizeof(svc_nodes[0]));
+    if (v) L4Re::Vfs::vfs_ops->mount("svc", v);
   }
 } _procfs_init __attribute__((init_priority(INIT_PRIO_LATE + 1)));
 
