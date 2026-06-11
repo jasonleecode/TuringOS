@@ -21,16 +21,7 @@
 
 #include <l4/re/env>
 #include <spawn_ipc.h>
-
-namespace {
-
-/* The device manifest (Phase 3: static). */
-char const *const drivers[] = {
-  "rom/ds18b20-server",
-  "rom/tef6686hn-server",
-};
-
-} // namespace
+#include <device_table.h>      /* the shared device model (g_device_table) */
 
 int main()
 {
@@ -44,8 +35,9 @@ int main()
     }
 
   int launched = 0;
-  for (auto path : drivers)
+  for (int i = 0; i < g_device_count; ++i)
     {
+      char const *path = g_device_table[i].driver;
       /* argv packed as "path\0\0" (path as argv0), per the spawn protocol. */
       char args[160];
       size_t plen = strlen(path);

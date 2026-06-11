@@ -7,7 +7,7 @@ SRC_CC		= procfs.cc
 
 PC_FILENAME	= procfs
 
-PRIVATE_INCDIR += $(SRC_DIR)/../../spawn/include
+PRIVATE_INCDIR += $(SRC_DIR)/../../spawn/include $(SRC_DIR)/../../devmgr/include
 
 include $(L4DIR)/mk/lib.mk
 

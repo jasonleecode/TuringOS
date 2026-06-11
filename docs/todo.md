@@ -328,7 +328,8 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 | 待做 | 把 Temp_svr/Radio_svr 提炼成**通用 class 协议**（独立 header 包，不再借 ds18b20/tef6686hn include）；rds RPC |
 | [✓] | **Phase 2（2026-06-10）：dev Namespace 注册表**——复用 L4Re::Namespace（Moe，零新服务器）；ned `l:create_namespace({})` 建空可写 ns，驱动用无名 `register_obj(&impl)` 自分配网关 + `dev->register_obj("temp0"/"radio0", gate)` 自注册，native_shell `dev->query(name)` 按名解析（缓存）。ned 删 per-driver 通道与 shell 的 temp/radio cap，只给一个 `dev:m("r")`（只读）；驱动给 `dev:m("rws")`（坑：必须 :m() 显式 rights，裸 cap 不映射）。验证：启动日志 `registered as dev/temp0/radio0`，temp/radio 经注册表解析照常（状态持久）；ci_smp_smoke 3/3 |
 | [✓] | **Phase 3（2026-06-10）：device-manager 动态启动**——新增 `pkg/devmgr`：按设备清单经一个**专用受限 spawnd 实例 `drvd`**（只配 `{dev:rws, vbus}`，spawnd 转发自身 initial caps→驱动只继承这套最小 cap，无 shell 的 sigma0/ext4）动态 spawn 驱动；ned 删掉逐个 `l:start` 驱动，改为起 drvd + devmgr。驱动经 drvd 起来后自注册进 dev（Phase 2 不变）。验证：`[devmgr] launching rom/ds18b20-server…2 launched`，驱动在 `drvd|` 日志下 `registered as dev/temp0/radio0`，temp/radio 照常+状态持久；ci_smp_smoke 3/3。（真·vbus 枚举 probe-gating / hotplug 留后续——devmgr 已是落点） |
-| 待做 | Phase 4：procfs 扩 **/sys/devices** 统一自省 + hotplug |
+| [✓] | **Phase 4（2026-06-10）：/sys/devices 自省**——procfs 加 `Devices_dir`/`Dev_file`（挂为 /sys 的 "devices" 子目录），`ls /sys/devices`→`temp0 radio0`、`cat /sys/devices/temp0`→name/class/**status:online**(查 dev 注册表的**活状态**)/driver。设备集来自共享 `device_table.h`（与 devmgr 同源）。坑：①子目录不能用嵌套 mount（被父 mount 遮蔽），要让 /sys 的 Gen_dir 自己返回子目录；②VFS 把整条剩余子路径 `devices/temp0` 传给 mount 的 get_entry，要 delegate 给子目录；③procfs 是 lib，改后 native_shell 须 `--pkg native_shell --force` 重链（否则旧 procfs 仍在）。验证：ls/cat 通、status 活、/proc 不受影响、ci_smp_smoke 3/3。**驱动框架 C→A→B 四阶段闭环** |
+| 待做 | hotplug / 每设备多属性子目录全树 / 真·vbus 枚举 probe-gating / 通用 class 协议头 + rds |
 
 ### 传感器 / 外设驱动
 

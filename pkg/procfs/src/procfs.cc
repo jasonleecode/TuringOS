@@ -23,7 +23,10 @@
 #include <l4/re/env>
 #include <l4/re/mem_alloc>
 #include <l4/sys/scheduler>
+#include <l4/re/namespace>
+#include <l4/re/util/cap_alloc>
 #include <spawn_ipc.h>
+#include <device_table.h>      /* the shared device model (g_device_table) */
 
 #include <string.h>
 #include <stdlib.h>
@@ -198,16 +201,37 @@ struct Gen_node { const char *name; gen_fn gen; };
 class Gen_dir : public Be_file
 {
 public:
-  Gen_dir(Gen_node const *nodes, unsigned count) noexcept
-  : _nodes(nodes), _count(count) {}
+  // Optional single subdirectory (e.g. /sys "devices") returned by name.
+  Gen_dir(Gen_node const *nodes, unsigned count,
+          const char *subdir_name = nullptr,
+          Ref_ptr<File> subdir = Ref_ptr<File>()) noexcept
+  : _nodes(nodes), _count(count), _subdir_name(subdir_name), _subdir(subdir) {}
 
-  int get_entry(const char *path, int flags, mode_t,
+  int get_entry(const char *path, int flags, mode_t mode,
                 Ref_ptr<File> *f) noexcept override
   {
     while (*path == '/') ++path;
     if (!*path) { *f = cxx::ref_ptr(this); return 0; }   // the dir itself
-    if (strchr(path, '/')) return -ENOENT;               // flat: no nesting
 
+    // Subdir match: "devices" itself, or "devices/<rest>" — delegate <rest>.
+    // (The VFS passes the whole remaining sub-path to a mount's get_entry.)
+    if (_subdir_name) {
+      size_t sl = strlen(_subdir_name);
+      if (strncmp(path, _subdir_name, sl) == 0 &&
+          (path[sl] == '\0' || path[sl] == '/')) {
+        if (!_subdir) return -ENOENT;
+        const char *rest = path + sl;
+        while (*rest == '/') ++rest;
+        if (!*rest) {                                    // the subdir itself
+          if (flags & (O_WRONLY | O_RDWR)) return -EACCES;
+          *f = _subdir;
+          return 0;
+        }
+        return _subdir->get_entry(rest, flags, mode, f);
+      }
+    }
+
+    if (strchr(path, '/')) return -ENOENT;               // flat files: no nesting
     for (unsigned i = 0; i < _count; ++i)
       if (strcmp(path, _nodes[i].name) == 0) {
         if (flags & (O_WRONLY | O_RDWR)) return -EACCES;  // read-only fs
@@ -222,6 +246,7 @@ public:
     while (*path == '/') ++path;
     if (!*path) return 0;
     if (mode & W_OK) return -EACCES;
+    if (_subdir_name && strcmp(path, _subdir_name) == 0) return 0;
     for (unsigned i = 0; i < _count; ++i)
       if (strcmp(path, _nodes[i].name) == 0) return 0;
     return -ENOENT;
@@ -240,8 +265,10 @@ public:
   {
     struct dirent64 *d = reinterpret_cast<struct dirent64 *>(buf);
     ssize_t ret = 0;
-    while (_dent_pos < _count) {
-      const char *name = _nodes[_dent_pos].name;
+    unsigned total = _count + (_subdir_name ? 1u : 0u);
+    while (_dent_pos < total) {
+      bool is_sub = (_dent_pos >= _count);
+      const char *name = is_sub ? _subdir_name : _nodes[_dent_pos].name;
       size_t nl = strlen(name) + 1;
       if (nl > sizeof(d->d_name)) nl = sizeof(d->d_name);
       unsigned reclen = offsetof(struct dirent64, d_name) + nl;
@@ -251,7 +278,7 @@ public:
       d->d_ino    = 1;
       d->d_off    = 0;
       d->d_reclen = (unsigned short)reclen;
-      d->d_type   = DT_REG;
+      d->d_type   = is_sub ? DT_DIR : DT_REG;
       memcpy(d->d_name, name, nl - 1);
       d->d_name[nl - 1] = 0;
 
@@ -268,7 +295,147 @@ public:
 private:
   Gen_node const *_nodes;
   unsigned        _count;
+  const char     *_subdir_name = nullptr;
+  Ref_ptr<File>   _subdir;
   unsigned        _dent_pos = 0;
+};
+
+// ---------------------------------------------------------------------------
+// /sys/devices — one file per managed device; content shows live status read
+// from the "dev" registry (driver-framework Phase 4).  The device set comes
+// from the shared g_device_table; status is "online" iff the driver has
+// registered itself (dev/<name> resolves).
+// ---------------------------------------------------------------------------
+static bool dev_online(char const *name)
+{
+  auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
+  if (!dev.is_valid()) return false;
+  auto slot = L4Re::Util::cap_alloc.alloc<void>();
+  if (!slot.is_valid()) return false;
+  bool ok = dev->query(name, slot) >= 0;
+  L4Re::Util::cap_alloc.free(slot);
+  return ok;
+}
+
+static int gen_device(int idx, char *buf, int n)
+{
+  Dev_entry const &e = g_device_table[idx];
+  return snprintf(buf, n,
+                  "name:   %s\n"
+                  "class:  %s\n"
+                  "status: %s\n"
+                  "driver: %s\n",
+                  e.name, e.cls,
+                  dev_online(e.name) ? "online" : "offline", e.driver);
+}
+
+// Per-device file: snapshots one device's detail at open (like Gen_file but
+// keyed by the device-table index).
+class Dev_file : public Be_file_pos
+{
+public:
+  explicit Dev_file(int idx) noexcept : Be_file_pos()
+  {
+    _buf = static_cast<char *>(malloc(BUFSZ));
+    if (_buf) {
+      int w = gen_device(idx, _buf, BUFSZ);
+      if (w < 0) w = 0; else if (w >= BUFSZ) w = BUFSZ - 1;
+      _size = (size_t)w;
+    }
+  }
+  ~Dev_file() noexcept { free(_buf); }
+
+  off64_t size() const noexcept override { return (off64_t)_size; }
+
+  ssize_t preadv(const struct iovec *iov, int cnt, off64_t off) noexcept override
+  {
+    if (!_buf) return -EIO;
+    ssize_t total = 0;
+    for (int i = 0; i < cnt; ++i) {
+      if (off < 0 || (size_t)off >= _size) break;
+      size_t avail = _size - (size_t)off, todo = iov[i].iov_len;
+      if (todo > avail) todo = avail;
+      if (!todo) break;
+      memcpy(iov[i].iov_base, _buf + off, todo);
+      off += (off64_t)todo; total += (ssize_t)todo;
+    }
+    return total;
+  }
+  ssize_t pwritev(const struct iovec *, int, off64_t) noexcept override { return -EROFS; }
+
+  int fstat(struct stat64 *b) const noexcept override
+  {
+    memset(b, 0, sizeof(*b));
+    b->st_mode = S_IFREG | 0444; b->st_size = (off64_t)_size; b->st_blksize = 4096;
+    return 0;
+  }
+  int get_status_flags() const noexcept override { return O_RDONLY; }
+
+private:
+  static const int BUFSZ = 1024;
+  char  *_buf  = nullptr;
+  size_t _size = 0;
+};
+
+// /sys/devices directory: entries are the rows of g_device_table.
+class Devices_dir : public Be_file
+{
+public:
+  int get_entry(const char *path, int flags, mode_t, Ref_ptr<File> *f) noexcept override
+  {
+    while (*path == '/') ++path;
+    if (!*path) { *f = cxx::ref_ptr(this); return 0; }
+    if (strchr(path, '/')) return -ENOENT;
+    for (int i = 0; i < g_device_count; ++i)
+      if (strcmp(path, g_device_table[i].name) == 0) {
+        if (flags & (O_WRONLY | O_RDWR)) return -EACCES;
+        *f = cxx::make_ref_obj<Dev_file>(i);
+        return *f ? 0 : -ENOMEM;
+      }
+    return -ENOENT;
+  }
+
+  int faccessat(const char *path, int mode, int) noexcept override
+  {
+    while (*path == '/') ++path;
+    if (!*path) return 0;
+    if (mode & W_OK) return -EACCES;
+    for (int i = 0; i < g_device_count; ++i)
+      if (strcmp(path, g_device_table[i].name) == 0) return 0;
+    return -ENOENT;
+  }
+
+  int fstat(struct stat64 *b) const noexcept override
+  {
+    memset(b, 0, sizeof(*b));
+    b->st_mode = S_IFDIR | 0555; b->st_nlink = 2; b->st_blksize = 4096;
+    return 0;
+  }
+
+  ssize_t getdents(char *buf, size_t sz) noexcept override
+  {
+    struct dirent64 *d = reinterpret_cast<struct dirent64 *>(buf);
+    ssize_t ret = 0;
+    while (_dent_pos < g_device_count) {
+      const char *name = g_device_table[_dent_pos].name;
+      size_t nl = strlen(name) + 1;
+      if (nl > sizeof(d->d_name)) nl = sizeof(d->d_name);
+      unsigned reclen = offsetof(struct dirent64, d_name) + nl;
+      reclen = (reclen + sizeof(long) - 1) & ~(sizeof(long) - 1);
+      if (reclen > sz) break;
+      d->d_ino = 1; d->d_off = 0;
+      d->d_reclen = (unsigned short)reclen; d->d_type = DT_REG;
+      memcpy(d->d_name, name, nl - 1); d->d_name[nl - 1] = 0;
+      ret += reclen; sz -= reclen;
+      d = reinterpret_cast<struct dirent64 *>(reinterpret_cast<char *>(d) + reclen);
+      ++_dent_pos;
+    }
+    if (!ret) _dent_pos = 0;
+    return ret;
+  }
+
+private:
+  int _dent_pos = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -296,8 +463,11 @@ struct Procfs_init
     Ref_ptr<File> p = cxx::make_ref_obj<Gen_dir>(
         proc_nodes, sizeof(proc_nodes) / sizeof(proc_nodes[0]));
     if (p) L4Re::Vfs::vfs_ops->mount("proc", p);
+    // /sys carries a "devices" subdir (the device-model view) — returned by
+    // the /sys dir itself, since a nested mount under /sys is shadowed.
+    Ref_ptr<File> dev = cxx::make_ref_obj<Devices_dir>();
     Ref_ptr<File> s = cxx::make_ref_obj<Gen_dir>(
-        sys_nodes, sizeof(sys_nodes) / sizeof(sys_nodes[0]));
+        sys_nodes, sizeof(sys_nodes) / sizeof(sys_nodes[0]), "devices", dev);
     if (s) L4Re::Vfs::vfs_ops->mount("sys", s);
   }
 } _procfs_init __attribute__((init_priority(INIT_PRIO_LATE + 1)));
