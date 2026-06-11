@@ -12,6 +12,7 @@
 #include <l4/devfs/devfs.h>
 #include <l4/re/env>
 #include <l4/re/l4aux.h>
+#include <auth_ipc.h>            /* authd Auth_svr protocol (via PRIVATE_INCDIR) */
 #include "commands.h"
 #include "shell_exec.h"
 #include "log.h"
@@ -102,9 +103,27 @@ static void handle_sigint(int)
 }
 
 /* ---- Login ---- */
-static constexpr const char *LOGIN_USER = "root";
-static constexpr const char *LOGIN_PASS = "12345678";
+/* Credentials are no longer compiled into the shell: native_shell asks the
+ * authd server (Auth_svr) to verify them over IPC.  The shell binary holds no
+ * password and never compares one itself (decompose-native_shell step ②). */
 static constexpr int MAX_LOGIN_ATTEMPTS = 3;
+
+/* Ask authd whether (user, pass) is valid.  Fail closed: if authd is
+ * unavailable, deny — the shell has no fallback credential of its own. */
+static bool auth_check(const char *user, const char *pass)
+{
+    static L4::Cap<Auth_svr> authd;
+    if (!authd.is_valid())
+        authd = L4Re::Env::env()->get_cap<Auth_svr>("authd");
+    if (!authd.is_valid()) {
+        klog_err(KLOG_KERN, "login: authd unavailable — denying");
+        return false;
+    }
+    long r = authd->authenticate(
+        L4::Ipc::Array<char const>(strlen(user), user),
+        L4::Ipc::Array<char const>(strlen(pass), pass));
+    return r == L4_EOK;
+}
 
 // read_login_line: read one line from the kbd ring buffer.
 //   show_star=false (username): rely on serial echo, don't putchar again.
@@ -138,6 +157,9 @@ static void read_login_line(char *buf, int maxlen, bool show_star)
     buf[i] = '\0';
 }
 
+/* Username of the successfully-authenticated session (filled by do_login). */
+static char g_login_user[64] = "";
+
 static bool do_login()
 {
     char user[64], pass[64];
@@ -149,8 +171,10 @@ static bool do_login()
         if (user[0] == '\0') { attempt--; continue; }
         printf("Password: "); fflush(stdout);
         read_login_line(pass, sizeof(pass), true);
-        if (strcmp(user, LOGIN_USER) == 0 && strcmp(pass, LOGIN_PASS) == 0)
+        if (auth_check(user, pass)) {
+            snprintf(g_login_user, sizeof(g_login_user), "%s", user);
             return true;
+        }
         printf("Login incorrect\n\n");
     }
     return false;
@@ -246,8 +270,16 @@ int main(int argc, char const* const* argv)
         klog_info(KLOG_KERN, "devfs: mounted");
     setup_devices();
 
+    /* Network-stack decomposition Phase 1: the virtio-net NIC is now owned by
+     * the standalone netd server (which holds it via vbus, not sigma0).  A
+     * single virtual NIC can have only one owner, so native_shell no longer
+     * auto-drives it.  net_auto_init() self-disables when the sigma0 cap is
+     * absent (it is — we dropped it from native-shell.cfg), so the in-process
+     * lwIP stack stays dormant and the legacy net commands report "not ready"
+     * until they are migrated to the netd client path.  The `tcp` command
+     * already uses netd.  Keeping the call (cheap no-op) documents the handoff
+     * and keeps the path alive should sigma0 ever be granted again. */
     net_auto_init();
-    klog_info(KLOG_NET, "net: auto-init started");
 
     // Initialize shell-exec: set up programs library
     auto* env = L4Re::Env::env();
@@ -288,9 +320,12 @@ int main(int argc, char const* const* argv)
     /* net_auto_init() logs IP/DNS status from a background thread that shares
      * this serial console.  Briefly wait for it to finish (static config is
      * sub-second) so those lines flush *before* the login prompt instead of
-     * clobbering it.  Bounded so DHCP / no-network boots aren't held up. */
-    for (int waited = 0; !net_is_ready() && waited < 1500; waited += 50)
-        usleep(50 * 1000);
+     * clobbering it.  Bounded so DHCP / no-network boots aren't held up.
+     * Skip the wait entirely when the in-process stack is dormant (no sigma0 —
+     * the NIC now belongs to netd), otherwise we'd stall 1.5 s for nothing. */
+    if (L4Re::Env::env()->get_cap<void>("sigma0").is_valid())
+        for (int waited = 0; !net_is_ready() && waited < 1500; waited += 50)
+            usleep(50 * 1000);
     klog_flush();
 
     printf("\nTuringOS 1.0 (ttyS0)\n\n");
@@ -300,7 +335,7 @@ int main(int argc, char const* const* argv)
     }
     klog_info(KLOG_KERN, "shell: login ok");
     klog_flush();
-    printf("\nWelcome, %s!\n", LOGIN_USER);
+    printf("\nWelcome, %s!\n", g_login_user);
     printf("Type 'help' for available commands.\n\n");
 
     /* Heap probe: if this crashes, the heap is corrupted before readline. */

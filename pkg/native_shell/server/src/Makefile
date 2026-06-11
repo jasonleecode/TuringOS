@@ -18,7 +18,8 @@ PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include \
                    $(SRC_DIR)/../../../net-cluster/protocol/mqtt \
                    $(SRC_DIR)/../../../net-cluster/protocol/telnet \
                    $(SRC_DIR)/../../../ds18b20/include \
-                   $(SRC_DIR)/../../../tef6686hn/include
+                   $(SRC_DIR)/../../../tef6686hn/include \
+                   $(SRC_DIR)/../../../authd/include
 
 # Force linker to pull in the client TUs that self-register with the VFS:
 # ext4_client registers its File_factory; tmpfs mounts /tmp; procfs mounts

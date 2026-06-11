@@ -1,0 +1,2 @@
+requires: stdlibs libstdc++ l4re-util
+provides: netcat

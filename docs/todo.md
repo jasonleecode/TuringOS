@@ -225,6 +225,19 @@ tools/ci_smp_smoke.sh -n 20                                  # 跑 20 轮回归
 | [✓] | DHCP 客户端（2026-06-09）：lwIP DHCP，`dhcp [release]` 命令 + `IFCONFIG_IP4_vn0=dhcp` 启动时动态获取（失败回退静态）。QEMU 验证：从 SLIRP DHCP 获到 10.0.2.15/24 gw 10.0.2.2 DNS 10.0.2.3，release 正常。静态仍为默认（快启动/兼容） |
 | 待做 | HTTP 客户端（wget / curl 最小实现） |
 
+#### 拆解 native_shell ① 网络栈 → 独立 `netd`（socket-over-IPC，2026-06-11）
+
+native_shell 把整套 lwIP + 手搓 virtio-net 驱动塞在进程内，还为此持 **sigma0**（裸映射全物理内存 = 安全缺口 6 最大洞）。Phase 1 把网络栈抽成独立 `pkg/netd` 服务器，立住"客户端经 IPC 用网络、不再碰 lwIP/sigma0"的架构地基。
+
+| 状态 | 子任务 |
+|------|------|
+| [✓] | **netd Phase 1（2026-06-11）**：新 `pkg/netd` 服务器，**经 vbus（非 sigma0）独占 virtio-net 网卡** + 跑 lwIP/DHCP/静态 IP；协议 `Net_svr`（`L4::Kobject_t<…,0x5904>`：`tcp_connect`/`send`/`recv`/`close`，inline `Ipc::Array`）；内部用 lwIP BSD socket 实现 RPC。virtio 驱动/lwIP/DHCP 原样搬自 `cmd_net.cc`，唯一实质改动＝MMIO 映射走 vbus iomem（仿 virtio-block-driver）而非 `l4sigma0_map_iomem`（DMA 仍用 user_factory + Phys_space，与 sigma0 无关）。native_shell 加 `tcp <ip> <port> <msg>` 命令（`get_cap<Net_svr>("netd")` 客户端）。ned：`virt-full.io` 加 `vbus_net=SLOT0`；`native-shell.cfg` 起 netd 只给 `{vbus, svr}`（**无 sigma0**），native_shell **摘掉 sigma0 cap** 换 `netd` cap。**头号安全 win：sigma0 从 native_shell 彻底消失**。QEMU 端到端验证（`tools/netd_verify.py`，pexpect）：`tcp 10.0.2.2 5000 hello_netd_phase1` → netd `tcp_connect`/`sent 17`/`recv 17 bytes: hello_netd_phase1`（shell→IPC→netd→lwIP→网卡→主机 echo→回 全链路），netd 日志 `virtio-net at vbus MMIO`/`stack ready`；ci_smp_smoke 3/3 |
+| 代价（明确） | Phase 1 让 netd 独占网卡，native_shell 进程内 lwIP 随之休眠（`net_auto_init` 无 sigma0 自禁用，`net_is_ready()`=false）：现有 8 个 net 命令（`net/ifconfig/dhcp/ping/nslookup/udp/mqtt/telnetd`）**暂时失效**，待后续阶段逐个迁到 netd 客户端路径后恢复 |
+| [✓] | **拆解 native_shell ③ 首步（2026-06-11）：netcat 独立进程**——新 `pkg/netcat`（独立 task，**不链 lwIP、不持 sigma0**），网络全经 `Net_svr` IPC（`get_cap<Net_svr>("netd")` → tcp_connect/send/recv/close）。接线：`native-shell.cfg` 给 **spawnd** 加 `netd` cap（spawnd 按名转发全部 initial caps 给子进程，故 `run rom/netcat` 自动拿到 netd），同时把 netd cap 从 **shell_caps 移除**（shell 自身不再持任何网络 cap），并**删掉 native_shell 里临时的 `tcp` 命令**（真正瘦 shell）。`modules.list` +netcat。QEMU 验证（`tools/netd_verify.py` 改驱 `run rom/netcat 10.0.2.2 5000 hello_netd_phase1`）：spawnd `spawned: rom/netcat (task=428000)`、netd `tcp_connect -> handle 3`、netcat `sent 17`/`recv 17 bytes: hello_netd_phase1`（独立进程→IPC→netd→lwIP→网卡→主机 echo→回 全链路）；ci_smp_smoke 3/3。证明"net app 作隔离进程、网络仅经 netd IPC"模式 + spawnd cap 转发接线 |
+| 待做 | netd Phase 2+：扩协议（bind/listen/accept、UDP、DNS、poll、共享 DS 大数据、并发/异步）、透明 libc socket 后端（`libc_be_socket_netd`）、迁移 8 个 net 命令、终态彻底从 native_shell 摘掉 lwIP；③ 续：telnetd/mqtt 等真 app 迁为独立进程（telnetd 需 netd listen/accept） |
+| [✓] | **拆解 native_shell ②（2026-06-11）：login/auth → 独立 authd + 文件 + 加盐哈希**——新 `pkg/authd`（`Auth_svr` 0x5905：`authenticate(user,pass)`→L4_EOK/-EPERM），凭据存 **/ext4/etc/shadow**（`user:salt_hex:hash_hex`，hash=SHA-256(salt‖pass)，复用 mbedTLS `sha256_*_ret` 流式 API；常量时比较）。authd 经 ext4 VFS（链 `ext4_client` + `-u ext4_client_module_init` + 持 `ext4` cap，`fopen("/ext4/etc/shadow")`，L4Re VFS 把命名 namespace cap 自动当目录解析）读凭据；无文件则退回内建 fallback（同哈希方案，明文不出现，仅防无盘 brick）。native_shell `do_login` 改 IPC 客户端（`authd->authenticate`），**删 LOGIN_USER/LOGIN_PASS 硬编码**（shell 二进制零密码），fail-closed（无 authd 拒登）。ned 起 authd 只给 `{svr, ext4}`（无 console/网络），shell 拿 `authd` cap。`tools/seed_auth.sh`（debugfs，须单会话 `cd /etc`+相对名 write，否则泄漏 inode 不链接）种盘。QEMU 验证（`tools/auth_verify.py`）：authd `loaded 1 credential from /ext4/etc/shadow`、错密码 `auth FAIL`→`Login incorrect`、对密码 `auth OK`→`Welcome, root!`；ci_smp_smoke 3/3。直面安全缺口 6 的"密码硬编码"|
+| 待做 | authd 续：passwd/useradd 工具、多用户、会话 token/uid、登录失败锁定（lockout）policy 移入 authd、shadow 文件权限/加密 |
+
 #### net-cluster — 对外连接套件（`pkg/net-cluster`，2026-06-09）
 
 协议库链入 native_shell（lwIP 跑在 shell 进程内，故 mqtt/telnet 必须同进程）；并掉了空壳 `pkg/net-tools`。

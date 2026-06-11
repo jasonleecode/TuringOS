@@ -62,6 +62,13 @@ Io.add_vbusses {
     BLK = wrap(hw.SLOT1)
   end),
 
+  -- netd gets only the VirtIO network device (SLOT0).  This replaces
+  -- native_shell's old sigma0 raw-MMIO path: the NIC is now handed to a single
+  -- owner (netd) through the io manager, so no task needs raw physical access.
+  vbus_net = Io.Vi.System_bus(function()
+    NET = wrap(hw.SLOT0)
+  end),
+
   -- Input consumer gets only keyboard + tablet (turingos,input compatible)
   vbus_input = Io.Vi.System_bus(function()
     DEVS = wrap(hw:match("turingos,input"))

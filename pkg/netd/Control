@@ -1,0 +1,2 @@
+requires: stdlibs libstdc++ lwip libc_be_socket_lwip libio-vbus l4re-util l4util
+provides: netd
