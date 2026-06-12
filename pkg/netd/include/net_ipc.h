@@ -98,7 +98,18 @@ struct Net_svr : L4::Kobject_t<Net_svr, L4::Kobject, 0x5904>
   L4_INLINE_RPC(long, udp_echo, (l4_uint32_t port, L4::Ipc::Array<char> &text));
   L4_INLINE_RPC(long, tcp_echo, (l4_uint32_t port, L4::Ipc::Array<char> &text));
 
+  /*
+   * TCP server sockets (for tools that accept connections, e.g. telnetd).
+   *   tcp_listen(port) -> lhandle: a non-blocking listening socket.
+   *   tcp_accept(lhandle) -> chandle: a new connection handle, or 0 if none is
+   *     pending yet (poll-friendly — the caller loops).  The connection handle
+   *     uses the same send/recv/close as a tcp_connect handle.
+   */
+  L4_INLINE_RPC(long, tcp_listen, (l4_uint32_t port, l4_uint32_t &lhandle));
+  L4_INLINE_RPC(long, tcp_accept, (l4_uint32_t lhandle, l4_uint32_t &chandle));
+
   typedef L4::Typeid::Rpcs<tcp_connect_t, send_t, recv_t, close_t,
                            ifconfig_t, resolve_t, ping_one_t, dhcp_t,
-                           udp_echo_t, tcp_echo_t> Rpcs;
+                           udp_echo_t, tcp_echo_t,
+                           tcp_listen_t, tcp_accept_t> Rpcs;
 };

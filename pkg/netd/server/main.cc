@@ -30,6 +30,7 @@
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <fcntl.h>
 
 #include <lwip/tcpip.h>
 #include <lwip/netifapi.h>
@@ -1221,6 +1222,49 @@ public:
                        "net: TCP echo server started on port %u", port);
       }
     text = L4::Ipc::Array_ref<char>((unsigned short)n, _txtbuf);
+    return L4_EOK;
+  }
+
+  long op_tcp_listen(Net_svr::Rights, l4_uint32_t port, l4_uint32_t &lhandle)
+  {
+    if (!g_net_stack_ready)
+      return -L4_ENODEV;
+    int fd = socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0)
+      return -L4_ENOMEM;
+    int on = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+    struct sockaddr_in addr{};
+    addr.sin_family      = AF_INET;
+    addr.sin_port        = htons((uint16_t)port);
+    addr.sin_addr.s_addr = INADDR_ANY;
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0
+        || listen(fd, 1) < 0)
+      { close(fd); return -L4_EIO; }
+    fcntl(fd, F_SETFL, O_NONBLOCK);      /* non-blocking accept (poll) */
+    g_open_handles.insert(fd);
+    lhandle = (l4_uint32_t)fd;
+    printf("[netd] tcp_listen on port %u -> handle %u\n", port, lhandle);
+    return L4_EOK;
+  }
+
+  long op_tcp_accept(Net_svr::Rights, l4_uint32_t lhandle,
+                     l4_uint32_t &chandle)
+  {
+    int lfd = (int)lhandle;
+    if (g_open_handles.find(lfd) == g_open_handles.end())
+      return -L4_EINVAL;
+    struct sockaddr_in cli{};
+    socklen_t cl = sizeof(cli);
+    int cfd = accept(lfd, (struct sockaddr *)&cli, &cl);
+    if (cfd < 0)
+      { chandle = 0; return L4_EOK; }    /* nothing pending yet */
+    struct timeval rtv = { 2, 0 };
+    setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+    g_open_handles.insert(cfd);
+    chandle = (l4_uint32_t)cfd;
+    printf("[netd] tcp_accept -> conn handle %u from %s\n",
+           chandle, inet_ntoa(cli.sin_addr));
     return L4_EOK;
   }
 
