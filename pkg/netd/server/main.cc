@@ -901,6 +901,12 @@ public:
       return -L4_EIO;
     }
 
+    /* Bound recv() so a client that waits for data (e.g. mqtt sub) lets netd's
+     * server.loop poll instead of blocking it indefinitely.  op_recv maps the
+     * timeout to an empty result; the client loops. */
+    struct timeval rtv = { 2, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
+
     g_open_handles.insert(fd);
     handle = (l4_uint32_t)fd;
     printf("[netd] tcp_connect -> handle %u (%s:%u)\n",
@@ -932,11 +938,17 @@ public:
     if (max > sizeof(_rxbuf))
       max = sizeof(_rxbuf);
 
-    ssize_t n = ::recv(fd, _rxbuf, max, 0);   /* blocks until data/EOF/error */
+    ssize_t n = ::recv(fd, _rxbuf, max, 0);   /* bounded by SO_RCVTIMEO */
     if (n < 0)
-      return -L4_EIO;
+      {
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+          n = 0;                 /* timeout: no data this poll (length 0) */
+        else
+          return -L4_EIO;
+      }
 
-    data = L4::Ipc::Array_ref<char>((unsigned short)n, _rxbuf);  /* 0 = peer EOF */
+    /* length 0 = no data (recv timeout) or peer EOF; the client decides. */
+    data = L4::Ipc::Array_ref<char>((unsigned short)n, _rxbuf);
     return L4_EOK;
   }
 
