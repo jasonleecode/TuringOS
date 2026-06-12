@@ -46,23 +46,10 @@ void cmd_kill(int argc, char **argv);
 void cmd_temp(int argc, char **argv);
 void cmd_radio(int argc, char **argv);
 
-/* network */
-void cmd_net(int argc, char **argv);
-/* ifconfig / dhcp / ping / nslookup migrated out of the shell into standalone
- * netd-client tools (pkg/net-cluster/tools), run via `run rom/<tool>`.  The
- * dhcp/ping/nslookup bodies still compile here (cmd_net.cc / cmd_ping.cc remain
- * for the not-yet-migrated `udp`/`net`), but are no longer registered commands;
- * the decls are kept so those dormant definitions don't warn. */
-void cmd_dhcp(int argc, char **argv);
-void cmd_ping(int argc, char **argv);
-void cmd_nslookup(int argc, char **argv);
-void cmd_udp(int argc, char **argv);
-void net_auto_init();  /* start network stack in background at boot */
-bool net_is_ready();   /* true once virtio-net + lwIP fully up */
-
-/* net-cluster — outward connectivity suite (linked from pkg/net-cluster) */
-void cmd_mqtt(int argc, char **argv);     /* libnc_mqtt */
-void cmd_telnetd(int argc, char **argv);  /* cmd_telnet.cc + libnc_telnet */
+/* Networking is fully out of the shell: the stack lives in the netd server and
+ * every net command is a standalone tool (pkg/net-cluster/tools) run via
+ * `run rom/<tool>` (ifconfig, netcat, dhcp, ping, nslookup, udpecho, tcpecho,
+ * mqtt).  native_shell links no lwIP and holds no sigma0. */
 
 /* system */
 void cmd_list_tasks(int argc, char **argv);

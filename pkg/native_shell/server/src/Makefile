@@ -2,21 +2,20 @@ PKGDIR		?= ../..
 L4DIR		?= $(PKGDIR)/../..
 
 TARGET		= native_shell
-SRC_CC		= main.cc commands.cc cmd_net.cc cmd_ping.cc cmd_telnet.cc \
+SRC_CC		= main.cc commands.cc \
 		  devices.cc dev_rtc.cc \
 		  shell_exec.cc cmd_top.cc
-# ds18b20 + tef6686hn libs dropped: the temp/radio drivers now run as their own
-# servers (ds18b20-server / tef6686hn-server); the `temp`/`radio` commands are
-# IPC clients (protocol headers only, no driver lib linked).
+# The network stack is gone from native_shell: it lives in the standalone netd
+# server, and all net commands are separate tools (pkg/net-cluster/tools).  So
+# the shell no longer links lwIP / the libc socket backend / sigma0 / the
+# net-cluster protocol libs — it holds no network code and no raw-memory cap.
+# (ds18b20/tef6686hn libs were dropped earlier: temp/radio are IPC clients.)
 REQUIRES_LIBS	= readline rtc rtc_libc_be \
-		  lwip libc_be_socket_lwip libio-vbus libstdc++ l4util libsigma0 \
-		  devfs libloader ext4_client libklog tmpfs procfs \
-		  nc_mqtt nc_telnet
+		  libio-vbus libstdc++ l4util \
+		  devfs libloader ext4_client libklog tmpfs procfs
 
 PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include \
                    $(SRC_DIR)/../../../filesystem/ext4/include \
-                   $(SRC_DIR)/../../../net-cluster/protocol/mqtt \
-                   $(SRC_DIR)/../../../net-cluster/protocol/telnet \
                    $(SRC_DIR)/../../../ds18b20/include \
                    $(SRC_DIR)/../../../tef6686hn/include \
                    $(SRC_DIR)/../../../authd/include

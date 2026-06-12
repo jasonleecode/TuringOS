@@ -62,9 +62,9 @@ shell_cmd commands[] = {
      * `run rom/{tcpecho,udpecho,dhcp,ping,nslookup}`.  The echo servers now run
      * on worker threads inside netd. */
     /* net-cluster — outward connectivity */
-    /* mqtt migrated to a standalone netd-client tool (pkg/net-cluster/tools/
-     * mqtt) — `run rom/mqtt pub|sub <broker> <topic> [..]` (plaintext; TLS TBD). */
-    { "telnetd",    "Telnet server (single session)  [port]",              cmd_telnetd  },
+    /* mqtt + telnetd migrated to standalone netd-client tools
+     * (pkg/net-cluster/tools): `run rom/mqtt pub|sub …`, `run rom/telnetd`.
+     * telnetd presents the TCP connection as a vcon and spawns native_shell. */
 };
 
 int num_commands = sizeof(commands) / sizeof(commands[0]);

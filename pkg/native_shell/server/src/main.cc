@@ -270,16 +270,9 @@ int main(int argc, char const* const* argv)
         klog_info(KLOG_KERN, "devfs: mounted");
     setup_devices();
 
-    /* Network-stack decomposition Phase 1: the virtio-net NIC is now owned by
-     * the standalone netd server (which holds it via vbus, not sigma0).  A
-     * single virtual NIC can have only one owner, so native_shell no longer
-     * auto-drives it.  net_auto_init() self-disables when the sigma0 cap is
-     * absent (it is — we dropped it from native-shell.cfg), so the in-process
-     * lwIP stack stays dormant and the legacy net commands report "not ready"
-     * until they are migrated to the netd client path.  The `tcp` command
-     * already uses netd.  Keeping the call (cheap no-op) documents the handoff
-     * and keeps the path alive should sigma0 ever be granted again. */
-    net_auto_init();
+    /* Networking is no longer in the shell: the netd server owns the NIC + the
+     * TCP/IP stack, and net commands are standalone tools (run rom/<tool>).
+     * native_shell links no lwIP and holds no sigma0. */
 
     // Initialize shell-exec: set up programs library
     auto* env = L4Re::Env::env();
@@ -316,16 +309,6 @@ int main(int argc, char const* const* argv)
     };
 
     klog_info(KLOG_KERN, "shell ready");
-
-    /* net_auto_init() logs IP/DNS status from a background thread that shares
-     * this serial console.  Briefly wait for it to finish (static config is
-     * sub-second) so those lines flush *before* the login prompt instead of
-     * clobbering it.  Bounded so DHCP / no-network boots aren't held up.
-     * Skip the wait entirely when the in-process stack is dormant (no sigma0 —
-     * the NIC now belongs to netd), otherwise we'd stall 1.5 s for nothing. */
-    if (L4Re::Env::env()->get_cap<void>("sigma0").is_valid())
-        for (int waited = 0; !net_is_ready() && waited < 1500; waited += 50)
-            usleep(50 * 1000);
     klog_flush();
 
     printf("\nTuringOS 1.0 (ttyS0)\n\n");
