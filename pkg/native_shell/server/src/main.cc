@@ -412,8 +412,12 @@ int main(int argc, char const* const* argv)
             }
         }
         if (!found) {
-            klog_warn(KLOG_SHELL, "command not found: %s", cmd_argv[0]);
-            printf("%s: command not found\n", cmd_argv[0]);
+            /* Not a builtin — try to run it as a program (rom/<cmd>), so the
+             * migrated net tools etc. work by name (ifconfig == run rom/ifconfig). */
+            if (!shell_try_exec(cmd_argc, cmd_argv)) {
+                klog_warn(KLOG_SHELL, "command not found: %s", cmd_argv[0]);
+                printf("%s: command not found\n", cmd_argv[0]);
+            }
         }
 
         g_cmd_running = false;

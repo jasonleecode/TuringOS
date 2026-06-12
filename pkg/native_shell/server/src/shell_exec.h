@@ -75,15 +75,16 @@ public:
 
   static bool file_exists(const char* path);
 
+  // Try "rom/<name>" then "<name>" in the environment namespace; returns an
+  // invalid cap (quietly) if not found.  Used for PATH-style auto-exec.
+  static L4Re::Util::Ref_cap<L4Re::Dataspace>::Cap open_from_env(const char* name);
+
   // Extract basename from a path into buf (three-arg version avoids conflict
   // with the POSIX basename(char*))
   static char* basename(const char* path, char* buf, size_t sz);
 
 private:
   static L4::Cap<L4Re::Namespace> g_programs_ns;
-
-  // Try "rom/<name>" then "<name>" in the environment namespace
-  static L4Re::Util::Ref_cap<L4Re::Dataspace>::Cap open_from_env(const char* name);
 };
 
 // ============================================================================

@@ -51,6 +51,10 @@ void cmd_radio(int argc, char **argv);
  * `run rom/<tool>` (ifconfig, netcat, dhcp, ping, nslookup, udpecho, tcpecho,
  * mqtt).  native_shell links no lwIP and holds no sigma0. */
 
+/* PATH-style auto-exec: run `argv[0]` as a program (rom/<cmd>) when it isn't a
+ * builtin.  Returns true if a matching program was found/launched. */
+bool shell_try_exec(int argc, char **argv);
+
 /* system */
 void cmd_list_tasks(int argc, char **argv);
 void cmd_top(int argc, char **argv);

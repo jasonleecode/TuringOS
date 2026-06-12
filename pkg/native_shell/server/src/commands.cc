@@ -917,6 +917,49 @@ void cmd_run(int argc, char **argv)
     printf("run: task exited with code: %ld\n", ret);
 }
 
+/* PATH-style auto-exec: when a typed command is not a builtin, try to run it as
+ * a program (rom/<cmd>), so the migrated net tools (and any ROM program) work by
+ * name — `ifconfig` behaves like `run rom/ifconfig`.  Returns true if a matching
+ * program was found and launched (or failed to start), false if no such program
+ * exists (so the caller prints "command not found"). */
+bool shell_try_exec(int argc, char **argv)
+{
+    (void)argc;
+    if (!argv || !argv[0] || !argv[0][0])
+        return false;
+
+    /* Quietly check rom/<cmd> (and the programs namespace) — no spawnd noise on
+     * a genuine typo. */
+    if (!File_resolver::open_from_env(argv[0]).is_valid())
+        return false;
+
+    auto spawnd = spawnd_cap();
+    if (!spawnd.is_valid())
+        return false;
+
+    bool background = g_run_background;
+    g_run_background = false;
+
+    char args_buf[1024];
+    size_t args_len = pack_argv(args_buf, sizeof(args_buf), argv);
+    l4_uint32_t flags = background ? SPAWN_BG : SPAWN_WAIT;
+
+    long ret = spawnd->spawn(
+        L4::Ipc::Array<char const>(strlen(argv[0]) + 1, argv[0]),
+        L4::Ipc::Array<char const>(args_len, args_buf),
+        flags);
+
+    if (ret < 0) {
+        printf("%s: failed to start (%ld)\n", argv[0], ret);
+        return true;                       /* found, but launch failed */
+    }
+    if (background) {
+        printf("[%ld] %s\n", ret, argv[0]);
+        task_register_proc((l4_uint32_t)ret, argv[0]);
+    }
+    return true;
+}
+
 void cmd_wait(int argc, char **argv)
 {
     if (argc < 2) {
