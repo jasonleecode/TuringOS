@@ -58,9 +58,8 @@ shell_cmd commands[] = {
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
     /* network */
     { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net      },
-    { "dhcp",       "Acquire IP via DHCP  [release]",                       cmd_dhcp     },
-    { "ping",       "ICMP ping  <host> [-c count]",                        cmd_ping     },
-    { "nslookup",   "DNS lookup  <hostname>",                              cmd_nslookup },
+    /* dhcp / ping / nslookup migrated to standalone netd-client tools
+     * (pkg/net-cluster/tools); run them via `run rom/{dhcp,ping,nslookup}`. */
     { "udp",        "Start UDP echo server on port 5001",                  cmd_udp      },
     /* net-cluster — outward connectivity */
     { "mqtt",       "MQTT client  pub|sub|pubs|subs <broker> <topic> [..]  (s=TLS)", cmd_mqtt },

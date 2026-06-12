@@ -64,6 +64,32 @@ struct Net_svr : L4::Kobject_t<Net_svr, L4::Kobject, 0x5904>
    */
   L4_INLINE_RPC(long, ifconfig, (L4::Ipc::Array<char> &text));
 
+  /*
+   * Resolve a hostname (or dotted-decimal) to its first IPv4 address.
+   *   out ip_be: the address in network byte order
+   * Returns L4_EOK, or -L4_EHOSTUNREACH if it can't be resolved.
+   */
+  L4_INLINE_RPC(long, resolve,
+                (L4::Ipc::Array<char const> host, l4_uint32_t &ip_be));
+
+  /*
+   * Send ONE ICMP echo (seq) to ip_be and wait up to ~1 s for the reply.
+   *   out rtt_us: round-trip time in microseconds, or -1 on timeout/error
+   *   out line:   one formatted result line ("N bytes from … time=…" / timeout)
+   * Per-packet (not a whole run) so each reply stays within the inline IPC
+   * budget; the `ping` tool loops, paces and computes the summary itself.
+   */
+  L4_INLINE_RPC(long, ping_one,
+                (l4_uint32_t ip_be, l4_uint32_t seq,
+                 l4_int32_t &rtt_us, L4::Ipc::Array<char> &line));
+
+  /*
+   * DHCP control: action 0 = renew (acquire a lease), 1 = release, 2 = status.
+   * Returns the result as text.
+   */
+  L4_INLINE_RPC(long, dhcp,
+                (l4_uint32_t action, L4::Ipc::Array<char> &text));
+
   typedef L4::Typeid::Rpcs<tcp_connect_t, send_t, recv_t, close_t,
-                           ifconfig_t> Rpcs;
+                           ifconfig_t, resolve_t, ping_one_t, dhcp_t> Rpcs;
 };

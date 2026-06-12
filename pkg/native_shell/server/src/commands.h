@@ -48,8 +48,11 @@ void cmd_radio(int argc, char **argv);
 
 /* network */
 void cmd_net(int argc, char **argv);
-/* ifconfig moved out of the shell: it is now a standalone netd client program
- * (pkg/net-cluster/tools/ifconfig), run via `run rom/ifconfig`. */
+/* ifconfig / dhcp / ping / nslookup migrated out of the shell into standalone
+ * netd-client tools (pkg/net-cluster/tools), run via `run rom/<tool>`.  The
+ * dhcp/ping/nslookup bodies still compile here (cmd_net.cc / cmd_ping.cc remain
+ * for the not-yet-migrated `udp`/`net`), but are no longer registered commands;
+ * the decls are kept so those dormant definitions don't warn. */
 void cmd_dhcp(int argc, char **argv);
 void cmd_ping(int argc, char **argv);
 void cmd_nslookup(int argc, char **argv);

@@ -39,7 +39,13 @@
 #include <lwip/ip4_addr.h>
 #include <lwip/netif.h>
 #include <lwip/dns.h>
+#include <lwip/netdb.h>
+#include <lwip/prot/icmp.h>
+#include <lwip/prot/ip4.h>
 #include <netif/ethernet.h>
+
+#include <sys/time.h>
+#include <ctime>
 
 #include <l4/re/env>
 #include <l4/re/error_helper>
@@ -769,6 +775,21 @@ namespace {
  * opaque handle; the set guards against clients passing fds we never opened. */
 static std::set<int> g_open_handles;
 
+/* ---- ICMP ping helpers (ported from native_shell's cmd_ping.cc) ---- */
+#define PING_DATA_SIZE  56u
+#define PING_PKT_SIZE   (sizeof(struct icmp_echo_hdr) + PING_DATA_SIZE)
+#define PING_ID         0xABCDu
+
+static uint16_t icmp_chksum(const void *data, size_t len)
+{
+  const uint16_t *p = (const uint16_t *)data;
+  uint32_t sum = 0;
+  while (len > 1) { sum += *p++; len -= 2; }
+  if (len) sum += *(const uint8_t *)p;
+  while (sum >> 16) sum = (sum & 0xffff) + (sum >> 16);
+  return (uint16_t)~sum;
+}
+
 class Net_impl : public L4::Epiface_t<Net_impl, Net_svr>
 {
 public:
@@ -848,9 +869,9 @@ public:
     int o = 0;
     auto app = [&](const char *fmt, ...) __attribute__((format(printf, 2, 3)))
     {
-      if (o >= (int)sizeof(_ifbuf)) return;
+      if (o >= (int)sizeof(_txtbuf)) return;
       va_list ap; va_start(ap, fmt);
-      int w = vsnprintf(_ifbuf + o, sizeof(_ifbuf) - o, fmt, ap);
+      int w = vsnprintf(_txtbuf + o, sizeof(_txtbuf) - o, fmt, ap);
       va_end(ap);
       if (w > 0) o += w;
     };
@@ -859,7 +880,7 @@ public:
     if (!g_net_stack_ready || netif_list == nullptr)
       {
         UNLOCK_TCPIP_CORE();
-        text = L4::Ipc::Array_ref<char>(0, _ifbuf);
+        text = L4::Ipc::Array_ref<char>(0, _txtbuf);
         return L4_EOK;
       }
 
@@ -897,8 +918,160 @@ public:
       }
     UNLOCK_TCPIP_CORE();
 
-    if (o > (int)sizeof(_ifbuf)) o = sizeof(_ifbuf);
-    text = L4::Ipc::Array_ref<char>((unsigned short)o, _ifbuf);
+    if (o > (int)sizeof(_txtbuf)) o = sizeof(_txtbuf);
+    text = L4::Ipc::Array_ref<char>((unsigned short)o, _txtbuf);
+    return L4_EOK;
+  }
+
+  long op_resolve(Net_svr::Rights, L4::Ipc::Array_ref<char const> host,
+                  l4_uint32_t &ip_be)
+  {
+    if (!g_net_stack_ready)
+      return -L4_ENODEV;
+
+    char name[128];
+    unsigned n = host.length < sizeof(name) - 1 ? host.length : sizeof(name) - 1;
+    memcpy(name, host.data, n);
+    name[n] = '\0';
+
+    /* dotted-decimal short-circuit */
+    ip4_addr_t a;
+    if (ip4addr_aton(name, &a)) { ip_be = a.addr; return L4_EOK; }
+
+    struct addrinfo hints{};
+    struct addrinfo *res = nullptr;
+    hints.ai_family = AF_INET;
+    if (lwip_getaddrinfo(name, nullptr, &hints, &res) != 0 || !res)
+      {
+        if (res) lwip_freeaddrinfo(res);
+        return -L4_ENOENT;
+      }
+    ip_be = ((struct sockaddr_in *)res->ai_addr)->sin_addr.s_addr;
+    lwip_freeaddrinfo(res);
+    return L4_EOK;
+  }
+
+  long op_ping_one(Net_svr::Rights, l4_uint32_t ip_be, l4_uint32_t seq,
+                   l4_int32_t &rtt_us, L4::Ipc::Array_ref<char> &line)
+  {
+    rtt_us = -1;
+    auto ret = [&](int n) -> long
+    {
+      line = L4::Ipc::Array_ref<char>((unsigned short)n, _txtbuf);
+      return L4_EOK;
+    };
+
+    if (!g_net_stack_ready)
+      return ret(snprintf(_txtbuf, sizeof(_txtbuf), "ping: network not ready"));
+
+    int s = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (s < 0)
+      return ret(snprintf(_txtbuf, sizeof(_txtbuf),
+                          "ping: cannot open raw socket"));
+    struct timeval tv = { 1, 0 };
+    setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+    uint8_t pkt[PING_PKT_SIZE];
+    memset(pkt, 0, sizeof(pkt));
+    auto *hdr = (struct icmp_echo_hdr *)pkt;
+    ICMPH_TYPE_SET(hdr, ICMP_ECHO);
+    ICMPH_CODE_SET(hdr, 0);
+    hdr->id    = htons(PING_ID);
+    hdr->seqno = htons((uint16_t)seq);
+    for (size_t i = sizeof(*hdr); i < PING_PKT_SIZE; i++)
+      pkt[i] = (uint8_t)(i - sizeof(*hdr));
+    hdr->chksum = icmp_chksum(pkt, PING_PKT_SIZE);
+
+    struct sockaddr_in dst{};
+    dst.sin_family      = AF_INET;
+    dst.sin_addr.s_addr = ip_be;
+
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    if (sendto(s, pkt, PING_PKT_SIZE, 0,
+               (struct sockaddr *)&dst, sizeof(dst)) < 0)
+      { close(s); return ret(snprintf(_txtbuf, sizeof(_txtbuf),
+                                      "ping: send error")); }
+
+    uint8_t buf[256];
+    struct sockaddr_in from{};
+    socklen_t fromlen = sizeof(from);
+    ssize_t rn = recvfrom(s, buf, sizeof(buf), 0,
+                          (struct sockaddr *)&from, &fromlen);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    close(s);
+
+    if (rn < 0)
+      return ret(snprintf(_txtbuf, sizeof(_txtbuf),
+                          "Request timeout for icmp_seq %u", seq));
+    if (rn < (ssize_t)sizeof(struct ip_hdr))
+      return ret(snprintf(_txtbuf, sizeof(_txtbuf), "ping: short reply"));
+
+    auto *ip = (struct ip_hdr *)buf;
+    int iphlen = IPH_HL(ip) * 4;
+    auto *reply = (struct icmp_echo_hdr *)(buf + iphlen);
+    if (rn < iphlen + (int)sizeof(struct icmp_echo_hdr)
+        || ICMPH_TYPE(reply) != ICMP_ER || ntohs(reply->id) != PING_ID)
+      return ret(snprintf(_txtbuf, sizeof(_txtbuf),
+                          "Request timeout for icmp_seq %u", seq));
+
+    long us = (t1.tv_sec - t0.tv_sec) * 1000000L
+            + (t1.tv_nsec - t0.tv_nsec) / 1000L;
+    rtt_us = (l4_int32_t)us;
+    return ret(snprintf(_txtbuf, sizeof(_txtbuf),
+                        "%zd bytes from %s: icmp_seq=%u ttl=%d time=%ld.%ld ms",
+                        rn - iphlen, inet_ntoa(from.sin_addr),
+                        ntohs(reply->seqno), (int)IPH_TTL(ip),
+                        us / 1000, (us % 1000) / 100));
+  }
+
+  long op_dhcp(Net_svr::Rights, l4_uint32_t action,
+               L4::Ipc::Array_ref<char> &text)
+  {
+    int o = 0;
+    auto app = [&](const char *fmt, ...) __attribute__((format(printf, 2, 3)))
+    {
+      if (o >= (int)sizeof(_txtbuf)) return;
+      va_list ap; va_start(ap, fmt);
+      int w = vsnprintf(_txtbuf + o, sizeof(_txtbuf) - o, fmt, ap);
+      va_end(ap);
+      if (w > 0) o += w;
+    };
+
+    if (!g_net_stack_ready)
+      {
+        app("dhcp: network not ready\n");
+        text = L4::Ipc::Array_ref<char>((unsigned short)o, _txtbuf);
+        return L4_EOK;
+      }
+
+    if (action == 1)            /* release */
+      {
+        netifapi_dhcp_release_and_stop(&n_netif);
+        app("dhcp: lease released, DHCP stopped\n");
+      }
+    else                        /* 0 = renew, 2 = status */
+      {
+        if (action == 0)
+          {
+            if (!do_dhcp(8000))
+              {
+                app("dhcp: no lease (no offer)\n");
+                text = L4::Ipc::Array_ref<char>((unsigned short)o, _txtbuf);
+                return L4_EOK;
+              }
+          }
+        char ip[16], nm[16], gw[16];
+        LOCK_TCPIP_CORE();
+        snprintf(ip, sizeof(ip), "%s", ip4addr_ntoa(netif_ip4_addr(&n_netif)));
+        snprintf(nm, sizeof(nm), "%s", ip4addr_ntoa(netif_ip4_netmask(&n_netif)));
+        snprintf(gw, sizeof(gw), "%s", ip4addr_ntoa(netif_ip4_gw(&n_netif)));
+        UNLOCK_TCPIP_CORE();
+        app("dhcp: IP %s  netmask %s  gw %s\n", ip, nm, gw);
+        app("dhcp: DNS %s\n", ipaddr_ntoa(dns_getserver(0)));
+      }
+
+    text = L4::Ipc::Array_ref<char>((unsigned short)o, _txtbuf);
     return L4_EOK;
   }
 
@@ -906,8 +1079,9 @@ private:
   /* Recv staging buffer.  Sized for the inline IPC message-register budget
    * (UTCB), which caps a single reply at well under 2 KiB. */
   char _rxbuf[1600];
-  /* ifconfig text buffer (same UTCB budget). */
-  char _ifbuf[1024];
+  /* Text buffer for the formatted-output ops (ifconfig / ping / dhcp).  Single
+   * client, so these never overlap. */
+  char _txtbuf[2000];
 };
 
 } // namespace
