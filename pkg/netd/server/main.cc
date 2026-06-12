@@ -790,6 +790,93 @@ static uint16_t icmp_chksum(const void *data, size_t len)
   return (uint16_t)~sum;
 }
 
+/* ---- Phase 2: echo-server worker threads ----
+ * These run a whole server (bind/accept/echo) on their own detached pthread, so
+ * the main server.loop stays responsive to other clients.  lwIP is thread-safe
+ * (its tcpip thread + per-socket locking), so blocking socket calls here are
+ * fine.  Started by the udp_echo / tcp_echo RPCs; run until netd exits. */
+static volatile bool g_udp_echo_running = false;
+static volatile bool g_tcp_echo_running = false;
+
+static void *udp_echo_thread(void *arg)
+{
+  int port = (int)(long)arg;
+  int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (s < 0) { g_udp_echo_running = false; return nullptr; }
+  int on = 1;
+  setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+  struct sockaddr_in addr{};
+  addr.sin_family      = AF_INET;
+  addr.sin_port        = htons((uint16_t)port);
+  addr.sin_addr.s_addr = INADDR_ANY;
+  if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) < 0)
+    { printf("[netd] udp echo: bind port %d failed\n", port);
+      close(s); g_udp_echo_running = false; return nullptr; }
+
+  printf("[netd] udp echo server listening on port %d\n", port);
+  char buf[1024];
+  for (;;)
+    {
+      struct sockaddr_in cli{};
+      socklen_t clen = sizeof(cli);
+      ssize_t n = recvfrom(s, buf, sizeof(buf), 0,
+                           (struct sockaddr *)&cli, &clen);
+      if (n < 0) break;
+      sendto(s, buf, (size_t)n, 0, (struct sockaddr *)&cli, clen);
+    }
+  close(s);
+  g_udp_echo_running = false;
+  return nullptr;
+}
+
+static void *tcp_echo_thread(void *arg)
+{
+  int port = (int)(long)arg;
+  int srv = socket(AF_INET, SOCK_STREAM, 0);
+  if (srv < 0) { g_tcp_echo_running = false; return nullptr; }
+  int on = 1;
+  setsockopt(srv, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+  struct sockaddr_in addr{};
+  addr.sin_family      = AF_INET;
+  addr.sin_port        = htons((uint16_t)port);
+  addr.sin_addr.s_addr = INADDR_ANY;
+  if (bind(srv, (struct sockaddr *)&addr, sizeof(addr)) < 0
+      || listen(srv, 4) < 0)
+    { printf("[netd] tcp echo: bind/listen port %d failed\n", port);
+      close(srv); g_tcp_echo_running = false; return nullptr; }
+
+  printf("[netd] tcp echo server listening on port %d\n", port);
+  for (;;)
+    {
+      struct sockaddr_in cli{};
+      socklen_t clen = sizeof(cli);
+      int cfd = accept(srv, (struct sockaddr *)&cli, &clen);
+      if (cfd < 0) continue;
+      const char *banner = "Hello from TuringOS netd TCP echo server!\r\n";
+      send(cfd, banner, strlen(banner), 0);
+      char buf[512];
+      ssize_t n;
+      while ((n = recv(cfd, buf, sizeof(buf), 0)) > 0)
+        send(cfd, buf, (size_t)n, 0);
+      close(cfd);
+    }
+  close(srv);
+  g_tcp_echo_running = false;
+  return nullptr;
+}
+
+/* Spawn a detached worker thread. */
+static bool spawn_worker(void *(*fn)(void *), void *arg)
+{
+  pthread_t t;
+  pthread_attr_t a;
+  pthread_attr_init(&a);
+  pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);
+  int r = pthread_create(&t, &a, fn, arg);
+  pthread_attr_destroy(&a);
+  return r == 0;
+}
+
 class Net_impl : public L4::Epiface_t<Net_impl, Net_svr>
 {
 public:
@@ -1072,6 +1159,56 @@ public:
       }
 
     text = L4::Ipc::Array_ref<char>((unsigned short)o, _txtbuf);
+    return L4_EOK;
+  }
+
+  long op_udp_echo(Net_svr::Rights, l4_uint32_t port,
+                   L4::Ipc::Array_ref<char> &text)
+  {
+    int n;
+    if (!g_net_stack_ready)
+      n = snprintf(_txtbuf, sizeof(_txtbuf), "udp: network not ready");
+    else if (port == 0 || port > 65535)
+      n = snprintf(_txtbuf, sizeof(_txtbuf), "udp: bad port");
+    else if (g_udp_echo_running)
+      n = snprintf(_txtbuf, sizeof(_txtbuf),
+                   "udp: echo server already running");
+    else
+      {
+        g_udp_echo_running = true;
+        if (!spawn_worker(udp_echo_thread, (void *)(long)port))
+          { g_udp_echo_running = false;
+            n = snprintf(_txtbuf, sizeof(_txtbuf), "udp: cannot start server"); }
+        else
+          n = snprintf(_txtbuf, sizeof(_txtbuf),
+                       "udp: echo server started on port %u", port);
+      }
+    text = L4::Ipc::Array_ref<char>((unsigned short)n, _txtbuf);
+    return L4_EOK;
+  }
+
+  long op_tcp_echo(Net_svr::Rights, l4_uint32_t port,
+                   L4::Ipc::Array_ref<char> &text)
+  {
+    int n;
+    if (!g_net_stack_ready)
+      n = snprintf(_txtbuf, sizeof(_txtbuf), "net: network not ready");
+    else if (port == 0 || port > 65535)
+      n = snprintf(_txtbuf, sizeof(_txtbuf), "net: bad port");
+    else if (g_tcp_echo_running)
+      n = snprintf(_txtbuf, sizeof(_txtbuf),
+                   "net: echo server already running");
+    else
+      {
+        g_tcp_echo_running = true;
+        if (!spawn_worker(tcp_echo_thread, (void *)(long)port))
+          { g_tcp_echo_running = false;
+            n = snprintf(_txtbuf, sizeof(_txtbuf), "net: cannot start server"); }
+        else
+          n = snprintf(_txtbuf, sizeof(_txtbuf),
+                       "net: TCP echo server started on port %u", port);
+      }
+    text = L4::Ipc::Array_ref<char>((unsigned short)n, _txtbuf);
     return L4_EOK;
   }
 

@@ -57,10 +57,10 @@ shell_cmd commands[] = {
     { "temp",       "Read DS18B20 temperature  [pin]",                 cmd_temp  },
     { "radio",      "TEF6686HN radio  <init|tune|seek|status|...>",    cmd_radio },
     /* network */
-    { "net",        "Start TCP echo server (virtio-net + lwIP)  [status]", cmd_net      },
-    /* dhcp / ping / nslookup migrated to standalone netd-client tools
-     * (pkg/net-cluster/tools); run them via `run rom/{dhcp,ping,nslookup}`. */
-    { "udp",        "Start UDP echo server on port 5001",                  cmd_udp      },
+    /* net (TCP echo) / udp (UDP echo) / dhcp / ping / nslookup migrated to
+     * standalone netd-client tools (pkg/net-cluster/tools); run them via
+     * `run rom/{tcpecho,udpecho,dhcp,ping,nslookup}`.  The echo servers now run
+     * on worker threads inside netd. */
     /* net-cluster — outward connectivity */
     { "mqtt",       "MQTT client  pub|sub|pubs|subs <broker> <topic> [..]  (s=TLS)", cmd_mqtt },
     { "telnetd",    "Telnet server (single session)  [port]",              cmd_telnetd  },

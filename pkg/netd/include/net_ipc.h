@@ -90,6 +90,15 @@ struct Net_svr : L4::Kobject_t<Net_svr, L4::Kobject, 0x5904>
   L4_INLINE_RPC(long, dhcp,
                 (l4_uint32_t action, L4::Ipc::Array<char> &text));
 
+  /*
+   * Start a UDP / TCP echo server on `port`, running on its own worker thread
+   * inside netd (so it doesn't block other clients).  Returns a status line.
+   * Idempotent: reports if one is already running.
+   */
+  L4_INLINE_RPC(long, udp_echo, (l4_uint32_t port, L4::Ipc::Array<char> &text));
+  L4_INLINE_RPC(long, tcp_echo, (l4_uint32_t port, L4::Ipc::Array<char> &text));
+
   typedef L4::Typeid::Rpcs<tcp_connect_t, send_t, recv_t, close_t,
-                           ifconfig_t, resolve_t, ping_one_t, dhcp_t> Rpcs;
+                           ifconfig_t, resolve_t, ping_one_t, dhcp_t,
+                           udp_echo_t, tcp_echo_t> Rpcs;
 };
