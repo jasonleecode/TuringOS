@@ -130,7 +130,8 @@ int Spawnd::unpack_args(const char *buf, size_t len,
 
 bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
                         l4_cap_idx_t *task, l4_cap_idx_t *thread,
-                        l4_cap_idx_t *rm, l4_cap_idx_t *gate)
+                        l4_cap_idx_t *rm, l4_cap_idx_t *gate,
+                        l4_cap_idx_t console)
 {
     int argc = 0;
     if (argv) while (argv[argc]) argc++;
@@ -145,6 +146,8 @@ bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
     try {
         Spawn_app_model am;
         am.set_args(argc, const_cast<const char *const *>(argv), envp);
+        if (l4_is_valid_cap(console))
+            am.set_console_cap(console);   /* telnetd vcon etc. */
 
         /* Bind parent gate to reaper BEFORE launching so the child's exit
          * l4_ipc_call(parent) is delivered to the reaper.  Label bits[1:0]
@@ -172,7 +175,8 @@ bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
 
 Child_task *Spawnd::do_spawn(const char *path_str,
                               char *const *argv,
-                              char *const * /*envp*/)
+                              char *const * /*envp*/,
+                              l4_cap_idx_t console)
 {
     /* 1. Allocate slot (state = LOADING) under lock. */
     pthread_mutex_lock(&_mtx);
@@ -189,7 +193,8 @@ Child_task *Spawnd::do_spawn(const char *path_str,
 
     /* 2. Load ELF without holding _mtx (many internal IPC calls). */
     l4_cap_idx_t task_idx, thread_idx, rm_idx, gate_idx;
-    if (!load_image(h, path_str, argv, &task_idx, &thread_idx, &rm_idx, &gate_idx)) {
+    if (!load_image(h, path_str, argv, &task_idx, &thread_idx, &rm_idx, &gate_idx,
+                    console)) {
         pthread_mutex_lock(&_mtx);
         _table.free(h);
         pthread_mutex_unlock(&_mtx);
@@ -357,6 +362,53 @@ l4_ret_t Spawnd::op_spawn(Spawn_svr::Rights,
     }
 
     /* SPAWN_BG: reaper will monitor from here. */
+    return (l4_ret_t)slot->handle;
+}
+
+l4_ret_t Spawnd::op_spawn_con(Spawn_svr::Rights,
+                              L4::Ipc::Array_ref<char const> path,
+                              L4::Ipc::Array_ref<char const> args,
+                              l4_uint32_t                    flags,
+                              L4::Ipc::Snd_fpage             console)
+{
+    if (path.length == 0) return -L4_EINVAL;
+
+    char path_buf[512];
+    size_t plen = path.length < sizeof(path_buf) - 1
+                  ? path.length : sizeof(path_buf) - 1;
+    memcpy(path_buf, path.data, plen);
+    path_buf[plen] = '\0';
+
+    char args_copy[1024];
+    size_t copy_len = args.length < sizeof(args_copy) ? args.length : sizeof(args_copy);
+    memcpy(args_copy, args.data, copy_len);
+    static constexpr int MAX_ARGV = 64;
+    char *argv[MAX_ARGV + 1];
+    unpack_args(args_copy, copy_len, argv, MAX_ARGV);
+
+    /* The caller mapped its console (vcon) cap into our receive buffer. */
+    l4_cap_idx_t console_cap = L4_INVALID_CAP;
+    if (console.cap_received())
+        console_cap = server_iface()->get_rcv_cap(0).cap();
+    if (!l4_is_valid_cap(console_cap))
+        return -L4_EINVAL;
+
+    Child_task *slot = do_spawn(path_buf, argv, nullptr, console_cap);
+
+    /* The child now holds its own mapping of the console (init_prog mapped the
+     * fpage into it); free our receive slot for the next request. */
+    server_iface()->realloc_rcv_cap(0);
+
+    if (!slot)
+        return -L4_ENOMEM;
+
+    if (flags & SPAWN_WAIT) {
+        long code = do_wait(slot);
+        pthread_mutex_lock(&_mtx);
+        _table.free(slot->handle);
+        pthread_mutex_unlock(&_mtx);
+        return (l4_ret_t)code;
+    }
     return (l4_ret_t)slot->handle;
 }
 

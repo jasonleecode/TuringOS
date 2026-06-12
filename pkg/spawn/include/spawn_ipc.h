@@ -44,6 +44,18 @@ struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901>
          l4_uint32_t                flags));
 
     /*
+     * Like spawn(), but the child's console (stdin/stdout/stderr → its "log"
+     * cap) is the caller-supplied `console` capability instead of spawnd's own
+     * serial console.  Used by telnetd to run native_shell over a telnet
+     * connection: telnetd passes a vcon backed by the TCP socket.
+     */
+    L4_INLINE_RPC(long, spawn_con,
+        (L4::Ipc::Array<char const> path,
+         L4::Ipc::Array<char const> args,
+         l4_uint32_t                flags,
+         L4::Ipc::Cap<void>         console));
+
+    /*
      * Wait for a task to exit.
      *
      * handle: value returned by spawn()
@@ -103,5 +115,5 @@ struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901>
          L4::Ipc::Array<char const> args));
 
     typedef L4::Typeid::Rpcs<spawn_t, wait_t, kill_t, task_count_t,
-                             task_stat_t, exec_t> Rpcs;
+                             task_stat_t, exec_t, spawn_con_t> Rpcs;
 };

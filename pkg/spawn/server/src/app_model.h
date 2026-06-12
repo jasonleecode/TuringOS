@@ -72,6 +72,12 @@ struct Spawn_model_base : public Ldr::Base_app_model<Spawn_stack>
   // spawnd startup (main.cc); L4_INVALID_CAP disables forwarding.
   static l4_cap_idx_t s_spawnd_cap;
 
+  // Optional per-spawn console cap: when valid, the child's "log" (stdin/stdout)
+  // is this cap instead of spawnd's own serial console.  Used by telnetd to run
+  // native_shell over a telnet connection (a vcon backed by the TCP socket).
+  l4_cap_idx_t _console_cap = L4_INVALID_CAP;
+  void set_console_cap(l4_cap_idx_t c) { _console_cap = c; }
+
   Spawn_model_base();
 
   // Set the argv/envp that will be pushed onto the child's startup stack.

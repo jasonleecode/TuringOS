@@ -20,6 +20,12 @@ public:
                       L4::Ipc::Array_ref<char const> args,
                       l4_uint32_t                    flags);
 
+    l4_ret_t op_spawn_con(Spawn_svr::Rights,
+                          L4::Ipc::Array_ref<char const> path,
+                          L4::Ipc::Array_ref<char const> args,
+                          l4_uint32_t                    flags,
+                          L4::Ipc::Snd_fpage             console);
+
     l4_ret_t op_wait(Spawn_svr::Rights,
                      l4_uint32_t handle,
                      l4_uint32_t flags);
@@ -54,7 +60,8 @@ private:
      */
     Child_task *do_spawn(const char *path_str,
                          char *const *argv,
-                         char *const *envp);
+                         char *const *envp,
+                         l4_cap_idx_t console = L4_INVALID_CAP);
 
     /*
      * Load `path_str` as a fresh L4 task and bind its parent gate to the reaper
@@ -65,7 +72,8 @@ private:
      */
     bool load_image(l4_uint32_t h, const char *path_str, char *const *argv,
                     l4_cap_idx_t *task, l4_cap_idx_t *thread,
-                    l4_cap_idx_t *rm, l4_cap_idx_t *gate);
+                    l4_cap_idx_t *rm, l4_cap_idx_t *gate,
+                    l4_cap_idx_t console = L4_INVALID_CAP);
 
     /*
      * Wait for a child to exit.  Uses a 200 ms timeout loop so a crash is

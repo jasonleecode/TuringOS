@@ -236,7 +236,11 @@ void Spawn_model_base::init_prog()
   auto env = L4Re::Env::env();
 
   prog_info()->mem_alloc = env->mem_alloc().fpage(L4_CAP_FPAGE_RWS);
-  prog_info()->log       = env->log().fpage(L4_CAP_FPAGE_RWS);
+  /* Console: a per-spawn console cap (e.g. telnetd's vcon) when supplied,
+   * otherwise spawnd's own serial console. */
+  l4_cap_idx_t log_cap = l4_is_valid_cap(_console_cap) ? _console_cap
+                                                       : env->log().cap();
+  prog_info()->log       = L4::Cap<void>(log_cap).fpage(L4_CAP_FPAGE_RWS);
   prog_info()->factory   = env->factory().fpage(L4_CAP_FPAGE_RWS);
   prog_info()->scheduler = env->scheduler().fpage(L4_CAP_FPAGE_RWS);
   prog_info()->rm        = _child_rm.get().fpage(L4_CAP_FPAGE_RWS);
