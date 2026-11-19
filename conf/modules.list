@@ -302,6 +302,16 @@ module io
 module virtio-serial
 module uart-test
 
+entry devkit-lvgl
+# board virt
+# build-packages fb-drv devkit/frameworks
+roottask moe rom/devkit-lvgl.cfg
+module l4re
+module ned
+module devkit-lvgl.cfg
+module fb-drv
+module sdk-lvgl
+
 entry fb-test
 # board virt
 # build-packages fb-test

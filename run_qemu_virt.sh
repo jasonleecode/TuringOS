@@ -17,6 +17,7 @@ GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="800x600"  # 帧缓冲分辨率
 SMP_CPUS=2       # 默认双核
 DISK_SIZE="100M" # 虚拟磁盘大小（设为空字符串禁用磁盘）
+DISK_IMAGE=""
 UART_MODE=""     # virtio-serial 串口（--uart 启用）
 
 while [[ $# -gt 0 ]]; do
@@ -65,11 +66,22 @@ while [[ $# -gt 0 ]]; do
             SMP_CPUS=1
             shift
             ;;
+        --disk-image)
+            if [[ $# -lt 2 || ! -f $2 || ! -s $2 ]]; then
+                echo "--disk-image requires an existing, nonempty raw image" >&2
+                exit 2
+            fi
+            DISK_IMAGE="$2"
+            DISK_SIZE=""
+            shift 2
+            ;;
         --disk)
+            DISK_IMAGE=""
             DISK_SIZE="$2"
             shift 2
             ;;
         --no-disk)
+            DISK_IMAGE=""
             DISK_SIZE=""
             shift
             ;;
@@ -99,6 +111,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --smp N               CPU 核心数 (默认 2，Fiasco 最多 16)"
             echo "  --no-smp              单核模式"
             echo "  --disk SIZE           虚拟磁盘大小 (默认 100M，如 512M, 1G)"
+            echo "  --disk-image PATH     使用已有的 raw ext4 开发盘"
             echo "  --no-disk             禁用虚拟磁盘"
             echo ""
             echo "示例:"
@@ -213,17 +226,19 @@ if [ -n "$GPU_MODE" ]; then
     # GPU 模式下 serial 单独走 stdio（不用 mon:stdio 以免干扰显示）
     SERIAL_ARGS="-serial stdio -monitor none"
 
-    echo "  启动配置: 使用 conf/fb-test.cfg 测试帧缓冲"
+    echo "  启动配置: $CFG_NAME"
     echo "  输入设备: virtio-keyboard (bus.3) + virtio-tablet (bus.4)"
 fi
 
 # ---- 磁盘参数 ----
-DISK_ARGS=""
-DISK_IMAGE="$out/virt_disk.img"
+DISK_ARGS=()
 
-if [ -n "$DISK_SIZE" ]; then
+if [[ -n $DISK_IMAGE || -n $DISK_SIZE ]]; then
     # 创建虚拟磁盘（如果不存在），并用 mkfs.ext4 预格式化
-    if [ ! -f "$DISK_IMAGE" ]; then
+    if [[ -z $DISK_IMAGE ]]; then
+        DISK_IMAGE="$out/virt_disk.img"
+    fi
+    if [[ -n $DISK_SIZE && ! -f $DISK_IMAGE ]]; then
         echo ""
         echo "创建虚拟磁盘: $DISK_IMAGE ($DISK_SIZE)"
         mkdir -p "$(dirname "$DISK_IMAGE")"
@@ -243,15 +258,12 @@ if [ -n "$DISK_SIZE" ]; then
     fi
 
     # 添加 VirtIO 块设备 (virtio-mmio transport, not PCIe)
-    DISK_ARGS="-drive if=none,id=vdisk,file=$DISK_IMAGE,format=raw -device virtio-blk-device,drive=vdisk,bus=virtio-mmio-bus.1"
+    DISK_ARGS=(-drive "if=none,id=vdisk,file=${DISK_IMAGE//,/,,},format=raw"
+               -device virtio-blk-device,drive=vdisk,bus=virtio-mmio-bus.1)
     echo ""
     echo "磁盘设备: VirtIO Block (bus=virtio-mmio-bus.1 → 0xa000200)"
     echo "  磁盘路径: $DISK_IMAGE"
-    echo "  磁盘大小: $DISK_SIZE"
-fi
-
-# ---- ext4 配置提示 ----
-if [ -z "$DISK_SIZE" ]; then
+else
     echo ""
     echo "警告: ext4 文件系统需要虚拟磁盘，请添加 --disk 100M 或使用默认启动"
 fi
@@ -293,5 +305,5 @@ $QEMU_ARCH \
     $GPU_ARGS \
     $INPUT_ARGS \
     $NET_ARGS \
-    $DISK_ARGS \
+    "${DISK_ARGS[@]}" \
     $UART_ARGS

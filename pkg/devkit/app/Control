@@ -1,0 +1,2 @@
+provides: sdk-hello
+requires: stdlibs compiler-rt libstdc++ task_io ext4_client

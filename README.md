@@ -18,6 +18,7 @@ turingos/
 │   ├── filesystem/ext4/   #   ext4 文件系统服务
 │   ├── virtio-*/          #   VirtIO 块 / 网络 / 串口驱动
 │   ├── fb-drv/ lvgl/      #   显示子系统
+│   ├── devkit/            #   应用模板、构建和开发盘工具
 │   ├── benchmark/         #   cyclictest / ipcbench / smp-spawn-bench
 │   └── ...                #   传感器、CAN、WebAssembly(wamr) 等
 ├── conf/            # 板级配置 boards/、启动清单 modules.list、Ned 和设备配置
@@ -155,6 +156,19 @@ app run calc
 `app install NAME VERSION FILE` 支持本架构 ELF 和导出 main 入口的 WASM，单文件上限为 4 MiB。安装新版本后，`app rollback NAME` 可以切回上一份通过校验的版本。可用 `sha256=HEX` 指定预期摘要。安装的 ELF 默认没有可选服务权限，可以显式授予 `net`、`tmp` 或 `data`。`data` 只挂载共享应用数据目录 `/data`，对应磁盘上的 `/ext4/data`。WASM 使用 WAMR 内置导入接口。
 
 新程序在 Makefile 中加入 `REQUIRES_LIBS += task_io` 和 `LDFLAGS += -u task_io_init`，即可接入标准输入输出管道和 IPv4 TCP 客户端 socket。需要访问 ext4、共享 `/tmp` 或 `/data` 时，再加入 `ext4_client` 和 `-u ext4_client_module_init`。使用 `python3 -u tools/ci_system_services.py` 可在临时磁盘上运行两次启动的系统回归，宿主机需安装 QEMU、e2fsprogs 和 Python pexpect。
+
+## 应用开发与显示支持
+
+`pkg/devkit` 提供原生 ELF、WASM 和 LVGL 示例。开发者可以在仓库外编译原生应用，用工具生成带安装命令的 ext4 开发盘，再用 `./run_qemu_virt.sh --disk-image PATH` 运行。[应用开发指南](pkg/devkit/README.md)
+
+| 目标 | 当前镜像的显示能力 |
+| --- | --- |
+| QEMU ARM virt | bootstrap 初始化 ramfb，`fb-drv` 把帧缓冲提供给 LVGL。可通过 GTK 或 VNC 查看画面。[virt 启动代码](pkg/bootstrap/server/src/platform/arm_virt.cc) · [图形启动配置](conf/devkit-lvgl.cfg) |
+| Raspberry Pi 4B | 默认入口启动串口 shell，未接入物理 HDMI 输出。[启动配置](conf/rpi4-native-shell.cfg) |
+| BeagleBone Black | 默认入口提供 GPIO、I²C 和 RTC，未启动板载显示服务。[启动配置](conf/bbb-native-shell.cfg) |
+| i.MX6UL | 默认入口启动串口 shell，未配置显示控制器或 HDMI 桥接器。[启动配置](conf/imx6ul-native-shell.cfg) |
+
+目前已在 QEMU 验证 LVGL 画面。仓库中这三个真机目标的默认镜像均未接通物理 HDMI 显示链路，也尚无接屏实测结果。
 
 ## 真机部署（BeagleBone Black）
 

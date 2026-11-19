@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Build an external L4Re application against an already configured board tree.
+set -euo pipefail
+root=$(cd "$(dirname "$0")/../../.." && pwd)
+board=virt
+if [[ ${1:-} == --board && $# -ge 2 ]]; then board=$2; shift 2; fi
+if [[ $# != 1 || ! -f $1/Makefile ]]; then
+    echo "usage: build-native [--board virt|rpi4|bbb|imx6ul] PROJECT_DIRECTORY" >&2
+    exit 2
+fi
+case "$board" in virt|rpi4|bbb|imx6ul) ;; *) echo "unknown board: $board" >&2; exit 2;; esac
+source "$root/conf/boards/$board.conf"
+base="${BUILD_OUT:-$root/build}/l4re_$BUILD_KEY"
+if [[ ! -f $base/.config.all || ! -f $root/l4mk/pkg/devkit/posix/app.mk ]]; then
+    echo "Prepare the SDK first: ./build.sh --board $board --pkg devkit/app --compile-only" >&2
+    exit 1
+fi
+base=$(cd "$base" && pwd)
+cc=$(sed -n 's/^CONFIGURED_CC=//p' "$base/.config.all")
+if [[ -z ${CROSS_COMPILE:-} ]]; then
+    [[ -x $cc ]] || { echo "Configured compiler is unavailable: $cc" >&2; exit 1; }
+    export PATH="$(dirname "$cc"):$PATH"
+    CROSS_COMPILE="$("$cc" -dumpmachine)-"
+fi
+make_cmd=${MAKE:-$(command -v gmake || command -v make)}
+exec "$make_cmd" -C "$1" "L4DIR=$root/l4mk" "O=$base" "CROSS_COMPILE=$CROSS_COMPILE"

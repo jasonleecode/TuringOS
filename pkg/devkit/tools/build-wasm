@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Build a freestanding C module exporting main for TuringOS wasm-run.
+set -euo pipefail
+if (( $# != 2 )); then echo "usage: build-wasm SOURCE.c OUTPUT.wasm" >&2; exit 2; fi
+source_file=$1
+output=$2
+if [[ -n ${WASM_LD:-} ]]; then
+    linker=$WASM_LD
+elif command -v wasm-ld >/dev/null; then
+    linker=wasm-ld
+elif command -v rustc >/dev/null; then
+    linker="$(rustc --print target-libdir)/../bin/gcc-ld/wasm-ld"
+else
+    linker=wasm-ld
+fi
+command -v "$linker" >/dev/null || { echo "Set WASM_LD to a wasm-ld executable" >&2; exit 1; }
+mkdir -p -- "$(dirname -- "$output")"
+work=$(mktemp -d "$(dirname -- "$output")/.sdk-wasm.XXXXXX")
+trap 'rm -rf -- "$work"' EXIT
+"${WASM_CC:-clang}" --target=wasm32-unknown-unknown -Oz -ffreestanding -fno-builtin \
+    -c "$source_file" -o "$work/module.o"
+"$linker" --no-entry --export=main --strip-all -z stack-size=16384 "$work/module.o" -o "$work/module.wasm"
+mv -- "$work/module.wasm" "$output"
