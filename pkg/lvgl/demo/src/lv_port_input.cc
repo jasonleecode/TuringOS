@@ -18,7 +18,7 @@
 #include <l4/vbus/vbus>
 #include <l4/sys/err.h>
 #include <l4/l4virtio/virtqueue>
-#include <l4/sigma0/sigma0.h>
+#include <l4/sys/task>
 #include <l4/klog/klog.h>
 #include <cstring>
 #include <cstdio>
@@ -175,13 +175,14 @@ static uint32_t linux_to_lv_key(l4_uint16_t code)
 // Virtqueue polling — called from LVGL indev read_cb
 // -----------------------------------------------------------------------
 
-static void poll_device(Input_dev &dev)
+static bool poll_device(Input_dev &dev)
 {
     L4virtio::rmb();
     bool recycled = false;
 
     while (dev.used_idx != dev.used->idx)
     {
+        bool report_transition = false;
         unsigned slot    = dev.used_idx % VQ_SIZE;
         l4_uint32_t id   = dev.used->ring[slot].id;
 
@@ -208,7 +209,9 @@ static void poll_device(Input_dev &dev)
                 }
                 else if (ev.type == EV_KEY && ev.code == BTN_LEFT)
                 {
-                    dev.pressed = (ev.value != 0);
+                    bool pressed = ev.value != 0;
+                    report_transition = pressed != dev.pressed;
+                    dev.pressed = pressed;
                 }
             }
             else
@@ -219,6 +222,7 @@ static void poll_device(Input_dev &dev)
                     uint32_t k = linux_to_lv_key(ev.code);
                     if (k)
                     {
+                        report_transition = true;
                         dev.last_key = k;
                         dev.key_state = (ev.value != 0)
                                         ? LV_INDEV_STATE_PRESSED
@@ -236,6 +240,9 @@ static void poll_device(Input_dev &dev)
         }
 
         dev.used_idx++;
+        // LVGL must see a press even if the matching release is already queued.
+        if (report_transition)
+            break;
     }
 
     if (recycled)
@@ -243,6 +250,7 @@ static void poll_device(Input_dev &dev)
         L4virtio::wmb();
         reg_write(dev.mmio_base, Mmio_queue_notify, 0);
     }
+    return dev.used_idx != dev.used->idx;
 }
 
 // -----------------------------------------------------------------------
@@ -252,7 +260,7 @@ static void poll_device(Input_dev &dev)
 static void ptr_read_cb(lv_indev_t * /*indev*/, lv_indev_data_t *data)
 {
     if (!s_tablet) return;
-    poll_device(*s_tablet);
+    data->continue_reading = poll_device(*s_tablet);
     data->point = s_tablet->pos;
     data->state = s_tablet->pressed
                   ? LV_INDEV_STATE_PRESSED
@@ -262,7 +270,7 @@ static void ptr_read_cb(lv_indev_t * /*indev*/, lv_indev_data_t *data)
 static void key_read_cb(lv_indev_t * /*indev*/, lv_indev_data_t *data)
 {
     if (!s_kb) return;
-    poll_device(*s_kb);
+    data->continue_reading = poll_device(*s_kb);
     data->key   = s_kb->last_key;
     data->state = s_kb->key_state;
 }
@@ -420,39 +428,28 @@ void lv_port_input_init()
         }
         if (!found_mmio) continue;
 
-        // Map MMIO uncached; device registers start at mmio_start
-        l4_addr_t page_off  = mmio_start & (l4_addr_t)(L4_PAGESIZE - 1);
-        l4_addr_t phys_base = mmio_start - page_off;
-        l4_size_t map_size  = (l4_size_t)((mmio_size + page_off + L4_PAGESIZE - 1)
-                                           & ~(l4_size_t)(L4_PAGESIZE - 1));
-        l4_addr_t mmio_virt = 0;
-        int r = -1;
+        // Only the transport header and input config selector are accessed.
+        // IO looks up the resource by its byte address before mapping the page.
+        // Aligning the request would select a different virtio slot on ARM virt.
+        l4_addr_t page_off = mmio_start - l4_trunc_page(mmio_start);
+        constexpr l4_size_t regs_size = Mmio_config + 3;
+        if (mmio_size < regs_size || page_off + regs_size > L4_PAGESIZE)
+            continue;
 
-        // Try sigma0 identity mapping (phys == virt) to bypass Moe RM
-        // object_pool restriction on non-Moe objects.
-        auto sig0 = L4Re::Env::env()->get_cap<void>("sigma0");
-        if (sig0.is_valid()) {
-            int sr = l4sigma0_map_iomem(sig0.cap(), phys_base, phys_base,
-                                        map_size, 0 /* uncached */);
-            if (sr == 0) {
-                mmio_virt = phys_base;
-                r = 0;
-            }
-        }
-        // Fallback: vbus-as-DS (works with ITAS in-process RM / ned)
+        auto rm = L4Re::Env::env()->rm();
+        l4_addr_t mmio_virt = 0;
+        long r = rm->reserve_area(&mmio_virt, L4_PAGESIZE,
+                                  L4Re::Rm::F::Search_addr | L4Re::Rm::F::Reserved);
         if (r < 0) {
-            auto iods = L4::Ipc::make_cap_rw(
-                L4::cap_reinterpret_cast<L4Re::Dataspace>(vbus));
-            mmio_virt = 0;
-            r = L4Re::Env::env()->rm()->attach(
-                &mmio_virt, map_size,
-                L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW
-                | L4Re::Rm::F::Cache_uncached,
-                iods, phys_base, L4_PAGESHIFT);
+            klog_err(KLOG_DISP, "lv_input: cannot reserve MMIO page (err %ld)", r);
+            continue;
         }
-        if (r < 0)
-        {
-            klog_err(KLOG_DISP, "lv_input: failed to map MMIO 0x%lx (err %d)",
+        auto io = L4::cap_reinterpret_cast<L4Re::Dataspace>(vbus);
+        r = io->map(mmio_start, L4Re::Dataspace::F::RW | L4Re::Dataspace::F::Uncacheable,
+                    mmio_virt, mmio_virt, mmio_virt + L4_PAGESIZE);
+        if (r < 0) {
+            rm->free_area(mmio_virt);
+            klog_err(KLOG_DISP, "lv_input: failed to map MMIO 0x%lx (err %ld)",
                      mmio_start, r);
             continue;
         }
@@ -467,7 +464,9 @@ void lv_port_input_init()
         }
         if (!ok)
         {
-            L4Re::Env::env()->rm()->detach(mmio_virt, nullptr);
+            l4_task_unmap(L4_BASE_TASK_CAP, l4_fpage(mmio_virt, L4_PAGESHIFT, L4_FPAGE_RWX),
+                          L4_FP_ALL_SPACES);
+            rm->free_area(mmio_virt);
             continue;
         }
 
@@ -498,6 +497,9 @@ void lv_port_input_init()
     {
         lv_indev_t *indev = lv_indev_create();
         lv_indev_set_type(indev, LV_INDEV_TYPE_KEYPAD);
+        lv_group_t *group = lv_group_create();
+        lv_group_set_default(group);
+        lv_indev_set_group(indev, group);
         lv_indev_set_read_cb(indev, key_read_cb);
         lv_timer_set_period(lv_indev_get_read_timer(indev), 16);
         klog_info(KLOG_DISP, "lv_input: registered keypad indev (keyboard)");
