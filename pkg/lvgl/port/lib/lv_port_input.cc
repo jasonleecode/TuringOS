@@ -505,3 +505,10 @@ void lv_port_input_init()
         klog_info(KLOG_DISP, "lv_input: registered keypad indev (keyboard)");
     }
 }
+
+void lv_port_input_shutdown()
+{
+    for (auto &dev : s_devs)
+        if (dev.valid)
+            reg_write(dev.mmio_base, Mmio_status, 0);
+}

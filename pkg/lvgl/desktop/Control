@@ -1,0 +1,2 @@
+provides: lvgl-desktop
+requires: lvgl-port rtc_libc_be

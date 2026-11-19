@@ -116,6 +116,16 @@ tools/ci_build_smoke.sh
 
 新建 virt 开发磁盘会写入初始账号 `root` / `12345678`。已有磁盘沿用 `/ext4/etc/shadow`；缺少有效凭据时登录关闭。需要初始化已有开发盘时，先关闭 QEMU，再用 `tools/seed_auth.sh --disk <镜像路径>` 写入凭据（会替换该盘的 shadow 文件）。i.MX6UL 无盘开发镜像显式启用内置账号。退出按 `Ctrl-A X`。
 
+**LVGL 桌面（QEMU virt）**
+
+启动上面的 `native-shell` 图形配置，在串口登录后输入：
+
+```sh
+run lvgl-desktop &
+```
+
+在 QEMU 图形窗口中单击左下角的「开始」打开菜单。桌面快捷方式也支持单击。窗口可拖动、最小化并从任务栏恢复。「显示属性」可切换壁纸，「退出桌面」关闭图形程序。桌面和 `lvgl-demo` 共用显示与输入设备，请一次运行其中一个。
+
 **RPi4 平台**：
 
 ```bash
