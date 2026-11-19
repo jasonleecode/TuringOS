@@ -3,6 +3,7 @@
 #include <l4/sys/cxx/ipc_epiface>
 #include <l4/sys/types.h>
 #include <spawn_ipc.h>
+#include <l4/re/util/object_registry>
 #include <pthread.h>
 #include <pthread-l4.h>
 
@@ -12,7 +13,8 @@
 class Spawnd : public L4::Epiface_t<Spawnd, Spawn_svr>
 {
 public:
-    Spawnd();
+    explicit Spawnd(L4Re::Util::Object_registry *registry);
+    bool bind_exit_notification();
     ~Spawnd();
 
     l4_ret_t op_spawn(Spawn_svr::Rights,
@@ -47,6 +49,24 @@ public:
                      L4::Ipc::Array_ref<char const> args);
 
 private:
+    struct Child_endpoint : L4::Epiface_t0<Spawn_svr> {
+        Spawnd *service;
+        l4_uint32_t handle;
+        l4_msgtag_t dispatch(l4_msgtag_t, unsigned, l4_utcb_t *) override;
+    };
+    struct Exit_notification : L4::Irqep_t<Exit_notification> {
+        Spawnd *service;
+        void handle_irq();
+    };
+    L4Re::Util::Object_registry *_registry;
+    Exit_notification _exit_notification;
+    Child_endpoint _endpoints[Task_table::MAX];
+    // Set only on the dispatch thread. Zero is the boot-time management gate.
+    l4_uint32_t _caller = 0;
+    Child_endpoint &endpoint(Child_task *task);
+    void free_child(Child_task *task);
+    void finish_waiters();
+    long spawn_result(Child_task *task, l4_uint32_t flags);
     Task_table      _table;
     pthread_mutex_t _mtx;
     pthread_t       _reaper;
@@ -60,8 +80,7 @@ private:
      */
     Child_task *do_spawn(const char *path_str,
                          char *const *argv,
-                         char *const *envp,
-                         l4_cap_idx_t console = L4_INVALID_CAP);
+                         Child_task::Console console = {});
 
     /*
      * Load `path_str` as a fresh L4 task and bind its parent gate to the reaper
@@ -73,14 +92,10 @@ private:
     bool load_image(l4_uint32_t h, const char *path_str, char *const *argv,
                     l4_cap_idx_t *task, l4_cap_idx_t *thread,
                     l4_cap_idx_t *rm, l4_cap_idx_t *gate,
-                    l4_cap_idx_t console = L4_INVALID_CAP);
+                    l4_cap_idx_t console, l4_cap_idx_t service_gate);
 
-    /*
-     * Wait for a child to exit.  Uses a 200 ms timeout loop so a crash is
-     * detected within one period via l4_thread_stats_time().
-     * Must NOT be called with _mtx held.
-     */
-    long do_wait(Child_task *t);
+    // Caller holds _mtx. The reply cap is completed by finish_waiters().
+    long wait_locked(Child_task *task, bool nonblocking);
 
     /* Unpack NUL-separated arg buffer into a NULL-terminated argv array. */
     static int unpack_args(const char *buf, size_t len,

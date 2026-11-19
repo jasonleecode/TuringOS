@@ -47,7 +47,8 @@ struct Net_svr : L4::Kobject_t<Net_svr, L4::Kobject, 0x5904>
 
   /*
    * Receive up to max (≤ ~2 KiB) bytes (blocking until data, EOF or error).
-   *   out data: the received bytes (length 0 means peer closed)
+   *   out data: the received bytes (length 0 means peer closed for max > 0)
+   *   returns -L4_EAGAIN on receive timeout
    */
   L4_INLINE_RPC(long, recv,
                 (l4_uint32_t handle, l4_uint32_t max,

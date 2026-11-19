@@ -904,7 +904,7 @@ public:
 
     /* Bound recv() so a client that waits for data (e.g. mqtt sub) lets netd's
      * server.loop poll instead of blocking it indefinitely.  op_recv maps the
-     * timeout to an empty result; the client loops. */
+     * timeout to EAGAIN; the client can retry. */
     struct timeval rtv = { 2, 0 };
     setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
 
@@ -943,12 +943,12 @@ public:
     if (n < 0)
       {
         if (errno == EAGAIN || errno == EWOULDBLOCK)
-          n = 0;                 /* timeout: no data this poll (length 0) */
+          return -L4_EAGAIN;
         else
           return -L4_EIO;
       }
 
-    /* length 0 = no data (recv timeout) or peer EOF; the client decides. */
+    /* A zero-byte result for a nonempty request is an orderly shutdown. */
     data = L4::Ipc::Array_ref<char>((unsigned short)n, _rxbuf);
     return L4_EOK;
   }
@@ -1259,7 +1259,8 @@ public:
     int cfd = accept(lfd, (struct sockaddr *)&cli, &cl);
     if (cfd < 0)
       { chandle = 0; return L4_EOK; }    /* nothing pending yet */
-    struct timeval rtv = { 2, 0 };
+    // Incoming terminal sessions poll on the shared RPC thread.
+    struct timeval rtv = { 0, 20000 };
     setsockopt(cfd, SOL_SOCKET, SO_RCVTIMEO, &rtv, sizeof(rtv));
     g_open_handles.insert(cfd);
     chandle = (l4_uint32_t)cfd;

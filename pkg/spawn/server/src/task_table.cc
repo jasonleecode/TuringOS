@@ -21,7 +21,6 @@ Child_task *Task_table::alloc(const char *name)
         _tasks[i].handle       = _next_handle++;
         _tasks[i].state        = Child_task::LOADING;
         _tasks[i].exit_code    = 0;
-        _tasks[i].being_waited = false;
         snprintf(_tasks[i].name, sizeof(_tasks[i].name), "%s", name ? name : "?");
         return &_tasks[i];
     }
@@ -52,10 +51,12 @@ void Task_table::free(l4_uint32_t handle)
     if (!t) return;
 
     /* Unique_del_cap RAII destroys the kernel objects on reset. */
-    t->task.reset();
+    // Stop the main thread before revoking its address space.
     t->thread.reset();
+    t->task.reset();
     t->rm.reset();
     t->parent_gate.reset();
+    t->console = Child_task::Console{};
 
     t->state  = Child_task::FREE;
     t->handle = 0;

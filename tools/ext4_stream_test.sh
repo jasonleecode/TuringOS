@@ -15,6 +15,7 @@
 #                                      cap is gone and offset read+write past
 #                                      the boundary are correct
 #   4. no kernel crash / JDB during the run
+#   5. a read-only filesystem check after QEMU stops
 #
 # All checks must pass for exit 0 (suitable as a regression gate).
 #
@@ -26,8 +27,7 @@
 #               the old cap, and exceed the 64 KiB server buffer to test chunking)
 #   -t SEC      overall QEMU wall timeout   (default scales with size)
 #   --image P   boot image                  (default bootstrap_native-shell.elf)
-#   --disk P    ext4 disk image             (default build/virt_disk.img;
-#               created + mkfs.ext4'd if absent)
+#   --disk P    source image to copy into the work dir (default: fresh ext4 image)
 #   --keep      keep the work dir + serial log on success (for debugging)
 #
 # ============================================================================
@@ -37,7 +37,7 @@ export PATH="/usr/sbin:/sbin:$PATH"   # debugfs / mkfs.ext4 live here
 
 PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE="$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-DISK="$PROJ_ROOT/build/virt_disk.img"
+SOURCE_DISK=""
 SIZE_MB=6
 TIMEOUT=0          # 0 => auto from size
 KEEP=0
@@ -47,7 +47,7 @@ while [[ $# -gt 0 ]]; do
         -s)        SIZE_MB="$2"; shift 2 ;;
         -t)        TIMEOUT="$2"; shift 2 ;;
         --image)   IMAGE="$2"; shift 2 ;;
-        --disk)    DISK="$2"; shift 2 ;;
+        --disk)    SOURCE_DISK="$2"; shift 2 ;;
         --keep)    KEEP=1; shift ;;
         -h|--help) sed -n '2,/^set -u/p' "$0" | sed 's/^# \{0,1\}//; /^set -u/d'; exit 0 ;;
         *) echo "未知参数: $1 (--help 查看用法)"; exit 2 ;;
@@ -59,7 +59,7 @@ COPY_WAIT=$(( SIZE_MB * 4 + 8 ))
 [ "$TIMEOUT" -eq 0 ] && TIMEOUT=$(( COPY_WAIT + 30 ))
 
 # ---- preconditions --------------------------------------------------------
-for t in qemu-system-arm debugfs; do
+for t in qemu-system-arm debugfs e2fsck; do
     command -v "$t" >/dev/null 2>&1 || { echo "错误: 找不到 $t"; exit 2; }
 done
 if [ ! -f "$IMAGE" ]; then
@@ -71,25 +71,26 @@ if [ "$SIZE_MB" -le 4 ]; then
     echo "警告: -s $SIZE_MB <= 4，无法证明 4 MiB 上限已破（建议 >= 6）。"
 fi
 
-# Create + format the disk if it does not exist (mirrors run_qemu_virt.sh).
-if [ ! -f "$DISK" ]; then
-    command -v mkfs.ext4 >/dev/null 2>&1 || { echo "错误: 磁盘不存在且找不到 mkfs.ext4"; exit 2; }
-    echo ">>> 创建并格式化磁盘 $DISK (100M)"
-    mkdir -p "$(dirname "$DISK")"
-    qemu-img create -f raw "$DISK" 100M >/dev/null
-    mkfs.ext4 -q -b 4096 -O ^has_journal -F "$DISK"
+if [ -n "$SOURCE_DISK" ] && [ ! -f "$SOURCE_DISK" ]; then
+    echo "错误: 找不到输入磁盘 $SOURCE_DISK"
+    exit 2
 fi
-
-WORK="$(mktemp -d /tmp/ext4_stream_test.XXXXXX)"
+WORK="$(mktemp -d /tmp/ext4_stream_test.XXXXXX)" || exit 2
+DISK="$WORK/disk.img"
 SRC="$WORK/big.bin"
 LOG="$WORK/serial.log"
 
-cleanup_disk() {
-    # Remove this test's files from the (persistent) disk image.
+if [ -n "$SOURCE_DISK" ]; then
+    cp "$SOURCE_DISK" "$DISK" || exit 2
+    # The test uses fixed guest paths. Only clear them on our private copy.
     for f in big.bin big_copy.bin t.txt f.txt; do
         debugfs -w -R "rm /$f" "$DISK" >/dev/null 2>&1
     done
-}
+else
+    qemu-img create -f raw "$DISK" 100M >/dev/null || exit 2
+    mkfs.ext4 -q -b 4096 -O ^has_journal -F "$DISK" || exit 2
+fi
+"$PROJ_ROOT/tools/seed_auth.sh" --disk "$DISK" >/dev/null || exit 2
 
 fail() { echo "  ✗ $1"; FAILED=1; }
 ok()   { echo "  ✓ $1"; }
@@ -117,7 +118,6 @@ del data[n:]
 open(path, "wb").write(data)
 PY
 
-cleanup_disk                                   # clear stale outputs first
 debugfs -w -R "write $SRC big.bin" "$DISK" >/dev/null 2>&1 \
     || { echo "错误: 注入 big.bin 失败"; rm -rf "$WORK"; exit 2; }
 
@@ -151,6 +151,16 @@ else
     ok "无内核崩溃"
 fi
 
+# QEMU has stopped with ext4 still mounted. All acknowledged allocations
+# should already be reflected in the on-disk superblock.
+# Some e2fsck versions exit successfully after declining a summary-count fix.
+if LC_ALL=C e2fsck -fn "$DISK" > "$WORK/fsck.log" 2>&1 &&
+   ! grep -Eq 'count wrong|\? no' "$WORK/fsck.log"; then
+    ok "停止 QEMU 后 ext4 五阶段只读检查通过"
+else
+    fail "磁盘一致性检查失败，详见 $WORK/fsck.log"
+fi
+
 # 1) write-through round-trip
 debugfs -R "dump /t.txt $WORK/t.txt" "$DISK" >/dev/null 2>&1
 if [ -f "$WORK/t.txt" ] && [ "$(cat "$WORK/t.txt")" = "hi_streaming" ]; then
@@ -180,7 +190,6 @@ else
 fi
 
 # ---- report ---------------------------------------------------------------
-cleanup_disk
 echo "------------------------------------------"
 if [ "$FAILED" -eq 0 ]; then
     [ "$KEEP" -eq 0 ] && rm -rf "$WORK"

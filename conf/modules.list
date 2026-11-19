@@ -13,6 +13,7 @@ roottask moe rom/imx6ul-native-shell.cfg
 module l4re
 module ned
 module imx6ul-native-shell.cfg
+module authd
 module native_shell
 module libreadline.so
 

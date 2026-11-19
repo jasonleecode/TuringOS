@@ -10,12 +10,10 @@
  * IPC (Auth_svr, auth_ipc.h): are these credentials valid?  The shell binary
  * therefore contains no password and never compares one itself.
  *
- * If the shadow file can't be read (e.g. a diskless boot with no ext4), authd
- * falls back to one built-in entry so the system isn't bricked — clearly logged
- * as a degraded mode.  The fallback hash is the same salted SHA-256 scheme, so
- * the secret still never appears in cleartext.
+ * Diskless development images explicitly select a built-in account at boot.
  */
 
+#include <cerrno>
 #include <cstdio>
 #include <cstring>
 #include <cstdlib>
@@ -43,6 +41,7 @@ struct Cred
 };
 
 std::vector<Cred> g_creds;
+bool retry_store_open = false;
 
 // ---- hex helpers ----------------------------------------------------------
 
@@ -135,7 +134,7 @@ bool add_shadow_line(const char *line)
   return true;
 }
 
-void install_fallback()
+void install_development_account()
 {
   // root / 12345678, salt 0123456789abcdef0123456789abcdef.
   // hash = SHA-256(salt || "12345678").  Kept here only so a diskless boot can
@@ -145,17 +144,16 @@ void install_fallback()
         "73c589806fe85d70363a88077d418adad034bd3fad37315681d7f80984710f00"))
     printf("[authd] ERROR: built-in fallback credential is malformed\n");
   else
-    printf("[authd] using built-in fallback credentials (DEGRADED — no "
-           SHADOW_PATH ")\n");
+    printf("[authd] diskless development account enabled\n");
 }
 
 void load_credentials()
 {
   FILE *f = fopen(SHADOW_PATH, "r");
+  retry_store_open = !f;
   if (!f)
     {
-      printf("[authd] cannot open " SHADOW_PATH "\n");
-      install_fallback();
+      printf("[authd] cannot open " SHADOW_PATH " (errno=%d)\n", errno);
       return;
     }
 
@@ -164,12 +162,15 @@ void load_credentials()
   while (fgets(line, sizeof(line), f))
     if (add_shadow_line(line))
       ++n;
+  if (ferror(f)) {
+    g_creds.clear();
+    n = 0;
+  }
   fclose(f);
 
   if (n == 0)
     {
       printf("[authd] " SHADOW_PATH " has no usable entries\n");
-      install_fallback();
       return;
     }
   printf("[authd] loaded %d credential(s) from " SHADOW_PATH "\n", n);
@@ -181,9 +182,12 @@ class Auth_impl : public L4::Epiface_t<Auth_impl, Auth_svr>
 {
 public:
   long op_authenticate(Auth_svr::Rights,
-                       L4::Ipc::Array_ref<char const> user,
-                       L4::Ipc::Array_ref<char const> pass)
+                       L4::Ipc::Array_in_buf<char> const &user,
+                       L4::Ipc::Array_in_buf<char> const &pass)
   {
+    // The filesystem may have been busy during boot. Retry on demand;
+    // the copy-in arguments survive nested filesystem IPC.
+    if (retry_store_open) load_credentials();
     std::string u(user.data, user.length);
     for (auto const &e : g_creds)
       {
@@ -207,11 +211,15 @@ public:
 
 static L4Re::Util::Registry_server<L4Re::Util::Br_manager_hooks> server;
 
-int main()
+int main(int argc, char **argv)
 {
   printf("[authd] starting\n");
 
-  load_credentials();
+  if (argc == 2 && strcmp(argv[1], "--diskless-development") == 0
+      && !L4Re::Env::env()->get_cap<void>("ext4").is_valid())
+    install_development_account();
+  else
+    load_credentials();
 
   static Auth_impl impl;
   if (!server.registry()->register_obj(&impl, "svr").is_valid())

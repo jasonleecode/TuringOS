@@ -1,6 +1,7 @@
 #pragma once
 
 #include <l4/re/util/unique_cap>
+#include <l4/re/util/cap_alloc>
 #include <l4/re/rm>
 #include <l4/sys/task>
 #include <l4/sys/thread>
@@ -25,7 +26,10 @@ struct Child_task {
 
     enum State { FREE = 0, LOADING, RUNNING, EXITED } state;
     long exit_code;
-    bool being_waited;  /* do_wait() owns gate-receive; reaper skips it */
+    l4_uint32_t owner;
+    L4::Reply_cap waiter;
+    using Console = L4Re::Util::Ref_cap<void>::Cap;
+    Console console;
 };
 
 class Task_table {

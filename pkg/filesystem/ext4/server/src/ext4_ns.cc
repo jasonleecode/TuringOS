@@ -194,8 +194,8 @@ Ext4_namespace::op_unlink(L4Re::Namespace::Rights,
   char path[512];
   build_path(path, sizeof(path), name.data, name.length);
 
-  if (ext4_fremove(path) == EOK) return L4_EOK;
-  if (ext4_dir_rm(path) == EOK)  return L4_EOK;
+  if (ext4_fremove(path) == EOK || ext4_dir_rm(path) == EOK)
+    return ext4_cache_flush(path) == EOK ? L4_EOK : -L4_EIO;
   return -L4_ENOENT;
 }
 
@@ -218,6 +218,7 @@ Ext4_namespace::op_ext_mkdir(Ext4_dir_ops::Rights,
       printf("[ext4ns] mkdir '%s' failed: %d\n", pbuf, r);
       return (r == EEXIST) ? -L4_EEXIST : -L4_EIO;
     }
+  if (ext4_cache_flush(pbuf) != EOK) return -L4_EIO;
   printf("[ext4ns] mkdir '%s' ok\n", pbuf);
   return L4_EOK;
 }
@@ -231,8 +232,8 @@ Ext4_namespace::op_ext_unlink(Ext4_dir_ops::Rights,
   memcpy(pbuf, path.data, n);
   pbuf[n] = '\0';
 
-  if (ext4_fremove(pbuf) == EOK) { printf("[ext4ns] unlink '%s' ok\n", pbuf); return L4_EOK; }
-  if (ext4_dir_rm(pbuf)  == EOK) { printf("[ext4ns] rmdir  '%s' ok\n", pbuf); return L4_EOK; }
+  if (ext4_fremove(pbuf) == EOK || ext4_dir_rm(pbuf) == EOK)
+    return ext4_cache_flush(pbuf) == EOK ? L4_EOK : -L4_EIO;
   printf("[ext4ns] unlink '%s' failed\n", pbuf);
   return -L4_ENOENT;
 }

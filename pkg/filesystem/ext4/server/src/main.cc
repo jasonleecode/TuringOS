@@ -83,6 +83,9 @@ static int run_io_test()
         return r ? r : -1;
     }
 
+    r = ext4_cache_flush(path);
+    if (r != EOK) return r;
+
     // Read back and verify
     r = ext4_fopen(&f, path, "rb");
     if (r != EOK) { printf("[ext4] fopen rb: %d\n", r); return r; }

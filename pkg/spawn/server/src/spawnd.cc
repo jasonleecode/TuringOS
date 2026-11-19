@@ -11,11 +11,43 @@
 /* Constructor / Destructor                                             */
 /* ------------------------------------------------------------------ */
 
-Spawnd::Spawnd() : _reaper_cap(L4_INVALID_CAP), _stop(false)
+Spawnd::Spawnd(L4Re::Util::Object_registry *registry)
+: _registry(registry), _reaper_cap(L4_INVALID_CAP), _stop(false)
 {
+    _exit_notification.service = this;
     pthread_mutex_init(&_mtx, nullptr);
     pthread_create(&_reaper, nullptr, &Spawnd::reaper_main, this);
     _reaper_cap = pthread_l4_cap(_reaper);
+}
+
+bool Spawnd::bind_exit_notification()
+{
+    return _registry->register_irq_obj(&_exit_notification).is_valid();
+}
+
+void Spawnd::Exit_notification::handle_irq()
+{
+    service->finish_waiters();
+}
+
+l4_msgtag_t Spawnd::Child_endpoint::dispatch(l4_msgtag_t tag, unsigned rights,
+                                             l4_utcb_t *utcb)
+{
+    service->_caller = handle;
+    auto reply = service->dispatch(tag, rights, utcb);
+    service->_caller = 0;
+    return reply;
+}
+
+Spawnd::Child_endpoint &Spawnd::endpoint(Child_task *task)
+{
+    return _endpoints[task - _table.at(0)];
+}
+
+void Spawnd::free_child(Child_task *task)
+{
+    _registry->unregister_obj(&endpoint(task));
+    _table.free(task->handle);
 }
 
 Spawnd::~Spawnd()
@@ -30,7 +62,7 @@ Spawnd::~Spawnd()
 /*                                                                     */
 /* All parent gates are bound to this thread.  The child's exit path   */
 /* calls l4_ipc_call(parent_gate) which delivers here.  We read the    */
-/* exit code, mark the slot EXITED (waking do_wait's poll), then reply  */
+/* exit code, mark the slot EXITED and notify a pending waiter, then reply  */
 /* (send timeout 0 — harmless if the task was already killed) and loop. */
 /* On a 500 ms receive timeout we fall through to crash detection.      */
 /* ------------------------------------------------------------------ */
@@ -61,6 +93,7 @@ void *Spawnd::reaper_main(void *arg)
                  * before do_spawn transitions the slot to RUNNING. */
                 t->state     = Child_task::EXITED;
                 t->exit_code = code;
+                if (t->waiter) self->_exit_notification.obj_cap()->trigger();
                 printf("[spawnd] reaper: [%u] '%s' exited (code=%ld)\n",
                        t->handle, t->name, code);
             }
@@ -99,6 +132,7 @@ void Spawnd::reap_once()
         if (l4_msgtag_has_error(r)) {
             t->state     = Child_task::EXITED;
             t->exit_code = -1;
+            if (t->waiter) _exit_notification.obj_cap()->trigger();
             printf("[spawnd] reaper: [%u] '%s' crashed (thread dead)\n",
                    t->handle, t->name);
         }
@@ -131,7 +165,7 @@ int Spawnd::unpack_args(const char *buf, size_t len,
 bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
                         l4_cap_idx_t *task, l4_cap_idx_t *thread,
                         l4_cap_idx_t *rm, l4_cap_idx_t *gate,
-                        l4_cap_idx_t console)
+                        l4_cap_idx_t console, l4_cap_idx_t service_gate)
 {
     int argc = 0;
     if (argv) while (argv[argc]) argc++;
@@ -145,6 +179,7 @@ bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
 
     try {
         Spawn_app_model am;
+        am.spawnd_cap = service_gate;
         am.set_args(argc, const_cast<const char *const *>(argv), envp);
         if (l4_is_valid_cap(console))
             am.set_console_cap(console);   /* telnetd vcon etc. */
@@ -175,13 +210,24 @@ bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
 
 Child_task *Spawnd::do_spawn(const char *path_str,
                               char *const *argv,
-                              char *const * /*envp*/,
-                              l4_cap_idx_t console)
+                              Child_task::Console console)
 {
     /* 1. Allocate slot (state = LOADING) under lock. */
     pthread_mutex_lock(&_mtx);
     Child_task *slot = _table.alloc(path_str);
-    l4_uint32_t h    = slot ? slot->handle : 0;
+    if (slot) {
+        slot->owner = _caller;
+        Child_task *parent = _table.find(_caller);
+        slot->console = (!console.is_valid() && parent) ? parent->console : console;
+        Child_endpoint &ep = endpoint(slot);
+        ep.service = this;
+        ep.handle = slot->handle;
+        if (!_registry->register_obj(&ep).is_valid()) {
+            _table.free(slot->handle);
+            slot = nullptr;
+        }
+    }
+    l4_uint32_t h = slot ? slot->handle : 0;
     pthread_mutex_unlock(&_mtx);
 
     if (!slot) {
@@ -194,9 +240,9 @@ Child_task *Spawnd::do_spawn(const char *path_str,
     /* 2. Load ELF without holding _mtx (many internal IPC calls). */
     l4_cap_idx_t task_idx, thread_idx, rm_idx, gate_idx;
     if (!load_image(h, path_str, argv, &task_idx, &thread_idx, &rm_idx, &gate_idx,
-                    console)) {
+                    slot->console.get().cap(), endpoint(slot).obj_cap().cap())) {
         pthread_mutex_lock(&_mtx);
-        _table.free(h);
+        free_child(slot);
         pthread_mutex_unlock(&_mtx);
         return nullptr;
     }
@@ -230,6 +276,7 @@ l4_ret_t Spawnd::op_exec(Spawn_svr::Rights,
                          L4::Ipc::Array_ref<char const> path,
                          L4::Ipc::Array_ref<char const> args)
 {
+    if (!_caller || handle != _caller) return -L4_EACCESS;
     if (path.length == 0) return -L4_EINVAL;
 
     /* Copy path + args out of the UTCB before any further IPC. */
@@ -259,23 +306,16 @@ l4_ret_t Spawnd::op_exec(Spawn_svr::Rights,
      * SAME handle so wait/kill/exit-detection keep working. */
     l4_cap_idx_t task_idx, thread_idx, rm_idx, gate_idx;
     if (!load_image(handle, path_buf, argv,
-                    &task_idx, &thread_idx, &rm_idx, &gate_idx))
+                    &task_idx, &thread_idx, &rm_idx, &gate_idx,
+                    slot->console.get().cap(), endpoint(slot).obj_cap().cap()))
         return -L4_EIO;                  /* replies; caller keeps old image */
 
     /* Atomically swap the slot's caps.  Reassigning slot->task destroys the
      * OLD task (the caller) — its thread is blocked here in the exec IPC and
      * vanishes with the task, so we must not reply (ENOREPLY). */
     pthread_mutex_lock(&_mtx);
-    slot = _table.find(handle);
-    if (!slot || slot->state != Child_task::RUNNING) {
-        pthread_mutex_unlock(&_mtx);
-        /* Slot vanished mid-exec (caller crashed): drop the new task. */
-        L4Re::Util::Unique_del_cap<L4::Task>(L4::Cap<L4::Task>(task_idx));
-        L4Re::Util::Unique_del_cap<L4::Thread>(L4::Cap<L4::Thread>(thread_idx));
-        L4Re::Util::Unique_del_cap<L4Re::Rm>(L4::Cap<L4Re::Rm>(rm_idx));
-        L4Re::Util::Unique_del_cap<L4::Ipc_gate>(L4::Cap<L4::Ipc_gate>(gate_idx));
-        return -L4_ENOREPLY;
-    }
+    // Only this dispatcher releases slots. A fast replacement may already
+    // have reported its exit to the reaper while load_image was returning.
     slot->task        = L4Re::Util::Unique_del_cap<L4::Task>(
                             L4::Cap<L4::Task>(task_idx));
     slot->thread      = L4Re::Util::Unique_del_cap<L4::Thread>(
@@ -291,36 +331,33 @@ l4_ret_t Spawnd::op_exec(Spawn_svr::Rights,
     return -L4_ENOREPLY;                  /* caller's task gone; no reply */
 }
 
-/* ------------------------------------------------------------------ */
-/* do_wait — poll for child exit marked by the reaper IPC loop         */
-/*                                                                     */
-/* The parent gate is bound to the reaper thread (see do_spawn).       */
-/* When the child calls l4_ipc_call(parent_gate), the reaper receives  */
-/* it, marks the slot EXITED, and sends a reply.  do_wait just polls   */
-/* t->state every 10 ms; no IPC receive here keeps the server          */
-/* dispatch thread's KR_REPLY intact for the spawner's reply.          */
-/* ------------------------------------------------------------------ */
+long Spawnd::wait_locked(Child_task *task, bool nonblocking)
+{
+    if (task->waiter) return -L4_EBUSY;
+    if (task->state == Child_task::EXITED) {
+        long code = task->exit_code;
+        free_child(task);
+        return code;
+    }
+    if (nonblocking) return -L4_EAGAIN;
 
-long Spawnd::do_wait(Child_task *t)
+    auto reply = server_iface()->take_reply_cap();
+    if (!reply) return reply.error();
+    task->waiter = cxx::move(reply).result();
+    return -L4_ENOREPLY;
+}
+
+void Spawnd::finish_waiters()
 {
     pthread_mutex_lock(&_mtx);
-    t->being_waited = true;
-    pthread_mutex_unlock(&_mtx);
-
-    /* Spin-poll (10 ms sleep) until reaper or reap_once marks EXITED. */
-    for (;;) {
-        pthread_mutex_lock(&_mtx);
-        if (t->state == Child_task::EXITED)
-            break;
-        pthread_mutex_unlock(&_mtx);
-        l4_ipc_sleep(l4_timeout(L4_IPC_TIMEOUT_0, l4_timeout_from_us(10000)));
+    for (int i = 0; i < Task_table::MAX; ++i) {
+        Child_task *task = _table.at(i);
+        if (task->state == Child_task::EXITED && task->waiter) {
+            task->waiter.reply(l4_msgtag(task->exit_code, 0, 0, 0));
+            free_child(task);
+        }
     }
-
-    long result     = t->exit_code;
-    t->being_waited = false;
     pthread_mutex_unlock(&_mtx);
-
-    return result;
 }
 
 /* ------------------------------------------------------------------ */
@@ -349,20 +386,21 @@ l4_ret_t Spawnd::op_spawn(Spawn_svr::Rights,
     char *argv[MAX_ARGV + 1];
     unpack_args(args_copy, copy_len, argv, MAX_ARGV);
 
-    Child_task *slot = do_spawn(path_buf, argv, nullptr);
-    if (!slot)
-        return -L4_ENOMEM;
+    return spawn_result(do_spawn(path_buf, argv), flags);
+}
 
-    if (flags & SPAWN_WAIT) {
-        long code = do_wait(slot);
-        pthread_mutex_lock(&_mtx);
-        _table.free(slot->handle);
-        pthread_mutex_unlock(&_mtx);
-        return (l4_ret_t)code;
-    }
+long Spawnd::spawn_result(Child_task *slot, l4_uint32_t flags)
+{
+    if (!slot) return -L4_ENOMEM;
+    if (!(flags & SPAWN_WAIT)) return slot->handle;
 
-    /* SPAWN_BG: reaper will monitor from here. */
-    return (l4_ret_t)slot->handle;
+    pthread_mutex_lock(&_mtx);
+    long code = wait_locked(slot, false);
+    // The foreground caller cannot collect a task if no reply slot is available.
+    if (code == -L4_ENOMEM && slot->state != Child_task::FREE)
+        free_child(slot);
+    pthread_mutex_unlock(&_mtx);
+    return code;
 }
 
 l4_ret_t Spawnd::op_spawn_con(Spawn_svr::Rights,
@@ -393,23 +431,10 @@ l4_ret_t Spawnd::op_spawn_con(Spawn_svr::Rights,
     if (!l4_is_valid_cap(console_cap))
         return -L4_EINVAL;
 
-    Child_task *slot = do_spawn(path_buf, argv, nullptr, console_cap);
-
-    /* The child now holds its own mapping of the console (init_prog mapped the
-     * fpage into it); free our receive slot for the next request. */
-    server_iface()->realloc_rcv_cap(0);
-
-    if (!slot)
-        return -L4_ENOMEM;
-
-    if (flags & SPAWN_WAIT) {
-        long code = do_wait(slot);
-        pthread_mutex_lock(&_mtx);
-        _table.free(slot->handle);
-        pthread_mutex_unlock(&_mtx);
-        return (l4_ret_t)code;
-    }
-    return (l4_ret_t)slot->handle;
+    long r = server_iface()->realloc_rcv_cap(0);
+    if (r < 0) return r;
+    Child_task::Console received{L4::Cap<void>(console_cap)};
+    return spawn_result(do_spawn(path_buf, argv, received), flags);
 }
 
 l4_ret_t Spawnd::op_wait(Spawn_svr::Rights,
@@ -423,24 +448,8 @@ l4_ret_t Spawnd::op_wait(Spawn_svr::Rights,
         return -L4_ENOENT;
     }
 
-    if (t->state == Child_task::EXITED) {
-        long code = t->exit_code;
-        _table.free(handle);
-        pthread_mutex_unlock(&_mtx);
-        return (l4_ret_t)code;
-    }
-
-    if (flags & WAIT_NOHANG) {
-        pthread_mutex_unlock(&_mtx);
-        return -L4_EAGAIN;
-    }
-    pthread_mutex_unlock(&_mtx);
-
-    /* Blocking wait — do_wait manages being_waited flag internally. */
-    long code = do_wait(t);
-
-    pthread_mutex_lock(&_mtx);
-    _table.free(handle);
+    long code = (!_caller || t->owner == _caller)
+                ? wait_locked(t, flags & WAIT_NOHANG) : -L4_EACCESS;
     pthread_mutex_unlock(&_mtx);
     return (l4_ret_t)code;
 }
@@ -454,8 +463,15 @@ l4_ret_t Spawnd::op_kill(Spawn_svr::Rights, l4_uint32_t handle)
         return -L4_ENOENT;
     }
 
+    if (_caller && t->owner != _caller) {
+        pthread_mutex_unlock(&_mtx);
+        return -L4_EACCESS;
+    }
+    if (t->waiter)
+        t->waiter.reply(l4_msgtag(-L4_ENOENT, 0, 0, 0));
+
     printf("[spawnd] kill: handle=%u (%s)\n", handle, t->name);
-    _table.free(handle);
+    free_child(t);
     pthread_mutex_unlock(&_mtx);
     return L4_EOK;
 }

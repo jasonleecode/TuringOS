@@ -27,7 +27,7 @@
 #   （schedule_in_progress / JDB 横幅），绝不用裸 "panic"。
 #
 # 用法
-#   tools/ci_smp_smoke.sh [-n 轮数] [-t 单轮超时秒] [-j 并发] [--smp N] [--image PATH]
+#   tools/ci_smp_smoke.sh [-n 轮数] [-t 单轮超时秒] [--smp N] [--image PATH]
 #
 #   -n N        迭代轮数            (默认 10)
 #   -t SEC      单轮 wall 超时秒    (默认 30；CI 镜像 bench -D 8 + 启动余量)
@@ -68,6 +68,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ---- 前置检查 -------------------------------------------------------------
+if ! [[ "$ITERS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "错误: -n 需要正整数" >&2
+    exit 2
+fi
 QEMU=qemu-system-arm
 command -v "$QEMU" >/dev/null 2>&1 || { echo "错误: 找不到 $QEMU"; exit 2; }
 if [ ! -f "$IMAGE" ]; then

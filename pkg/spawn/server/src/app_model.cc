@@ -330,13 +330,18 @@ void Spawn_model_base::get_task_caps(L4::Cap<L4::Factory> *factory,
   *thread  = _child_thread_cap.get();
 }
 
-l4_cap_idx_t Spawn_model_base::s_spawnd_cap = L4_INVALID_CAP;
+static bool forward_cap(l4re_env_cap_entry_t const &e)
+{
+  return l4_is_valid_cap(e.cap)
+         && strncmp(e.name, "svr", sizeof(e.name)) != 0
+         && strncmp(e.name, "spawnd", sizeof(e.name)) != 0;
+}
 
 l4_cap_idx_t Spawn_model_base::push_initial_caps(l4_cap_idx_t start)
 {
   l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
   for (; e && e->flags != ~0UL; ++e) {
-    if (!l4_is_valid_cap(e->cap)) continue;
+    if (!forward_cap(*e)) continue;
     l4re_env_cap_entry_t child_e;
     child_e.cap   = start;
     child_e.flags = 0;
@@ -344,10 +349,10 @@ l4_cap_idx_t Spawn_model_base::push_initial_caps(l4_cap_idx_t start)
     _stack.push(child_e);
     start += L4_CAP_OFFSET;
   }
-  /* Append spawnd's own service cap as "spawnd" so the child can exec().
+  /* Append the per-task service gate as "spawnd" so the child can exec().
    * Must stay in lock-step with map_initial_caps (same iteration + same
    * trailing entry => same index). */
-  if (l4_is_valid_cap(s_spawnd_cap)) {
+  if (l4_is_valid_cap(spawnd_cap)) {
     l4re_env_cap_entry_t child_e;
     child_e.cap   = start;
     child_e.flags = 0;
@@ -363,17 +368,17 @@ void Spawn_model_base::map_initial_caps(L4::Cap<L4::Task> task, l4_cap_idx_t sta
 {
   l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
   for (; e && e->flags != ~0UL; ++e) {
-    if (!l4_is_valid_cap(e->cap)) continue;
+    if (!forward_cap(*e)) continue;
     task->map(L4Re::This_task,
               L4::Cap<void>(e->cap).fpage(L4_CAP_FPAGE_RWS),
               L4::Cap<void>(start).snd_base());
     start += L4_CAP_OFFSET;
   }
-  /* Map spawnd's own service cap at the same trailing index push_initial_caps
+  /* Map the per-task service gate at the same trailing index push_initial_caps
    * reserved for the "spawnd" entry. */
-  if (l4_is_valid_cap(s_spawnd_cap)) {
+  if (l4_is_valid_cap(spawnd_cap)) {
     task->map(L4Re::This_task,
-              L4::Cap<void>(s_spawnd_cap).fpage(L4_CAP_FPAGE_RWS),
+              L4::Cap<void>(spawnd_cap).fpage(L4_CAP_FPAGE_RWS),
               L4::Cap<void>(start).snd_base());
     start += L4_CAP_OFFSET;
   }

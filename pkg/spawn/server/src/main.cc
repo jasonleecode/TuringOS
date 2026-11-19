@@ -16,14 +16,16 @@
 #include <l4/sys/cxx/ipc_epiface>
 #include <l4/re/l4aux.h>
 
+#include <l4/re/util/reply_cap_hooks>
 #include "spawnd.h"
 
 /* l4re_aux must be a global; Spawn_model_base::local_kip_ds() references it
  * (same requirement as ned and native_shell). */
 l4re_aux_t const *l4re_aux = nullptr;
 
-static L4Re::Util::Registry_server<L4Re::Util::Br_manager_hooks> server;
-static Spawnd spawnd_obj;
+using Server_hooks = L4Re::Util::Reply_cap_hooks<L4Re::Util::Br_manager_hooks>;
+static L4Re::Util::Registry_server<Server_hooks> server;
+static Spawnd spawnd_obj(server.registry());
 
 int main(int argc, char const *const *argv)
 {
@@ -47,9 +49,10 @@ int main(int argc, char const *const *argv)
         return 1;
     }
 
-    /* Forward this cap to every spawned child as "spawnd" so children can call
-     * back (exec()).  Same gate the shell uses; invoking it reaches our loop. */
-    Spawn_model_base::s_spawnd_cap = svr_cap.cap();
+    if (!spawnd_obj.bind_exit_notification()) {
+        printf("[spawnd] cannot register exit notification\n");
+        return 1;
+    }
 
     printf("[spawnd] ready\n");
     server.loop();

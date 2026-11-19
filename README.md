@@ -98,7 +98,7 @@ export CROSS_COMPILE=aarch64-none-elf-
 ./run_qemu_virt.sh --help            # 查看全部选项（--gpu / --disk / --smp 等）
 ```
 
-默认账号 `root` / `12345678`。退出按 `Ctrl-A X`。
+新建 virt 开发磁盘会写入初始账号 `root` / `12345678`。已有磁盘沿用 `/ext4/etc/shadow`；缺少有效凭据时登录关闭。需要初始化已有开发盘时，先关闭 QEMU，再用 `tools/seed_auth.sh --disk <镜像路径>` 写入凭据（会替换该盘的 shadow 文件）。i.MX6UL 无盘开发镜像显式启用内置账号。退出按 `Ctrl-A X`。
 
 **RPi4 平台**：
 

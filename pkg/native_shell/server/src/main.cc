@@ -1,3 +1,4 @@
+#include <cerrno>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -76,10 +77,19 @@ int kbd_try_pop()
 static int rl_getc_buf(FILE *) { return kbd_pop(); }
 
 /* ---- stdin monitor thread ---- */
-static void *stdin_monitor(void *)
+static void *stdin_monitor(void *arg)
 {
+    const bool remote = *static_cast<bool *>(arg);
     char c;
-    while (read(STDIN_FILENO, &c, 1) > 0) {
+    for (;;) {
+        ssize_t n = read(STDIN_FILENO, &c, 1);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) {
+            // A remote console reports a hangup even when the main thread is
+            // waiting for login input or a foreground command.
+            if (remote && n < 0 && errno == ENODEV) _exit(0);
+            break;
+        }
         if ((unsigned char)c == 3) {
             g_shell_interrupt = 1;
             if (!g_cmd_running)
@@ -125,30 +135,26 @@ static bool auth_check(const char *user, const char *pass)
     return r == L4_EOK;
 }
 
-// read_login_line: read one line from the kbd ring buffer.
-//   show_star=false (username): rely on serial echo, don't putchar again.
-//   show_star=true  (password): disable serial echo via tcsetattr, show '*' manually.
-static void read_login_line(char *buf, int maxlen, bool show_star)
+// The serial vcon echoes input itself. The remote console leaves echo to
+// the shell, so passwords can be masked before any bytes are sent back.
+static void read_login_line(char *buf, int maxlen, bool show_star, bool local_echo)
 {
-    // Note: tcsetattr/tcgetattr are intentionally not used here.
-    // L4Re's vcon TCSETS ioctl is a stub and interacts badly with
-    // uclibc's malloc mutex, causing heap corruption on the first
-    // free() call after the login sequence. The stdin_monitor thread
-    // delivers raw characters via kbd_pop(), so tty-layer echo
-    // suppression is neither needed nor safe.
     int i = 0;
     for (;;) {
         int c = kbd_pop();
         if (c == '\n' || c == '\r') {
-            if (show_star) { putchar('\n'); fflush(stdout); }
+            if (show_star || local_echo) { putchar('\n'); fflush(stdout); }
             break;
         } else if ((c == '\b' || c == 127) && i > 0) {
             i--;
             // vcon already echoed \b (cursor moved back over the last char/*)
-            printf(" \b"); fflush(stdout);
+            fputs(local_echo ? "\b \b" : " \b", stdout); fflush(stdout);
         } else if (i < maxlen - 1 && c >= 0x20) {
             buf[i++] = (char)c;
-            if (show_star) {
+            if (local_echo) {
+                putchar(show_star ? '*' : c);
+                fflush(stdout);
+            } else if (show_star) {
                 // vcon echoed the real char; overwrite it with * via \b
                 printf("\b*"); fflush(stdout);
             }
@@ -160,17 +166,17 @@ static void read_login_line(char *buf, int maxlen, bool show_star)
 /* Username of the successfully-authenticated session (filled by do_login). */
 static char g_login_user[64] = "";
 
-static bool do_login()
+static bool do_login(bool local_echo)
 {
     char user[64], pass[64];
     for (int attempt = 0; attempt < MAX_LOGIN_ATTEMPTS; attempt++) {
         printf("login: "); fflush(stdout);
-        read_login_line(user, sizeof(user), false);
+        read_login_line(user, sizeof(user), false, local_echo);
         /* Empty username (e.g. a bare Enter, or the prompt was clobbered by
          * late boot logs): re-prompt rather than asking for a password. */
         if (user[0] == '\0') { attempt--; continue; }
         printf("Password: "); fflush(stdout);
-        read_login_line(pass, sizeof(pass), true);
+        read_login_line(pass, sizeof(pass), true, local_echo);
         if (auth_check(user, pass)) {
             snprintf(g_login_user, sizeof(g_login_user), "%s", user);
             return true;
@@ -257,7 +263,9 @@ int main(int argc, char const* const* argv)
     pthread_attr_t attr;
     pthread_attr_init(&attr);
     pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
-    pthread_create(&mon, &attr, stdin_monitor, nullptr);
+    bool local_echo = argc == 2 && strcmp(argv[1], "--no-console-echo") == 0;
+    if (pthread_create(&mon, &attr, stdin_monitor, &local_echo))
+        return 1;
     pthread_attr_destroy(&attr);
 
     klog_init(KLOG_FILE_PATH);
@@ -313,7 +321,7 @@ int main(int argc, char const* const* argv)
 
     printf("\nTuringOS 1.0 (ttyS0)\n\n");
     for (;;) {
-        if (do_login()) break;
+        if (do_login(local_echo)) break;
         printf("Too many login failures. Try again.\n\n");
     }
     klog_info(KLOG_KERN, "shell: login ok");

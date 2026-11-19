@@ -257,9 +257,18 @@ if [ -n "$DISK_SIZE" ]; then
         echo ""
         echo "创建虚拟磁盘: $DISK_IMAGE ($DISK_SIZE)"
         mkdir -p "$(dirname "$DISK_IMAGE")"
-        qemu-img create -f raw "$DISK_IMAGE" "$DISK_SIZE"
-        echo "预格式化 ext4 文件系统..."
-        mkfs.ext4 -b 4096 -O ^has_journal -F "$DISK_IMAGE"
+        (
+            set -e
+            disk_tmp=$(mktemp "${DISK_IMAGE}.XXXXXX")
+            trap 'rm -f "$disk_tmp"' EXIT
+            qemu-img create -f raw "$disk_tmp" "$DISK_SIZE"
+            echo "预格式化 ext4 文件系统..."
+            mkfs.ext4 -b 4096 -O ^has_journal -F "$disk_tmp"
+            "$PROJ_ROOT/tools/seed_auth.sh" --disk "$disk_tmp"
+            # Publish the initialized image without replacing a concurrently created disk.
+            ln "$disk_tmp" "$DISK_IMAGE" || test -f "$DISK_IMAGE"
+        )
+        if [ "$?" -ne 0 ]; then exit 1; fi
         echo "虚拟磁盘创建并格式化完成"
     fi
 

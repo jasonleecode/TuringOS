@@ -60,7 +60,9 @@ bool mq_send(const uint8_t *p, int n)
 int mq_recv(uint8_t *buf, int max)
 {
   L4::Ipc::Array<char> a(max, (char *)buf);
-  if (g_netd->recv(g_h, max, a) != L4_EOK) return 0;
+  long r = g_netd->recv(g_h, max, a);
+  if (r == -L4_EAGAIN) return 0;
+  if (r != L4_EOK || a.length == 0) return -1;
   return a.length;
 }
 
@@ -191,6 +193,7 @@ int main(int argc, char **argv)
         {
           uint8_t rb[1024];
           int got = mq_recv(rb, sizeof(rb));
+          if (got < 0) break;
           if (got == 0) { if (++polls % 15 == 0) mqtt_pingreq(); continue; }
           int pos = 0;
           while (pos < got)

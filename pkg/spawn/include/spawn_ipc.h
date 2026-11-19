@@ -25,7 +25,8 @@ enum {
     WAIT_NOHANG = 1,  /* non-blocking; returns -L4_EAGAIN if still running */
 };
 
-struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901>
+struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901,
+                                    L4::Type_info::Demand_t<1>>
 {
     /*
      * Launch a program.

@@ -67,6 +67,10 @@ bool Ext4_file_svr::ensure_open()
       printf("[ext4svr] fopen '%s' failed\n", _path);
       return false;
     }
+  if (ext4_cache_flush(_path) != EOK) {
+    ext4_fclose(&_f);
+    return false;
+  }
   _f_open = true;
   return true;
 }
@@ -126,7 +130,7 @@ Ext4_file_svr::op_pwrite(Ext4_file_ops::Rights,
 
   size_t wc = 0;
   int re = ext4_fwrite(&_f, reinterpret_cast<void *>(_buf_addr), len, &wc);
-  if (re != EOK || wc != len)
+  if (re != EOK || wc != len || ext4_cache_flush(_path) != EOK)
     {
       printf("[ext4svr] pwrite '%s' off=%llu len=%u failed: re=%d wc=%zu\n",
              _path, (unsigned long long)off, len, re, wc);
@@ -156,7 +160,7 @@ Ext4_file_svr::op_pappend(Ext4_file_ops::Rights,
 
   size_t wc = 0;
   int re = ext4_fwrite(&_f, reinterpret_cast<void *>(_buf_addr), len, &wc);
-  if (re != EOK || wc != len)
+  if (re != EOK || wc != len || ext4_cache_flush(_path) != EOK)
     {
       printf("[ext4svr] pappend '%s' len=%u failed: re=%d wc=%zu\n",
              _path, len, re, wc);
@@ -172,7 +176,7 @@ Ext4_file_svr::op_ftruncate(Ext4_file_ops::Rights, l4_uint64_t size)
   if (!_ok)           return -L4_ENOMEM;
   if (!ensure_open()) return -L4_EIO;
 
-  if (ext4_ftruncate(&_f, size) != EOK)
+  if (ext4_ftruncate(&_f, size) != EOK || ext4_cache_flush(_path) != EOK)
     {
       printf("[ext4svr] ftruncate '%s' size=%llu failed\n",
              _path, (unsigned long long)size);

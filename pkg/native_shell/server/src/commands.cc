@@ -977,6 +977,10 @@ void cmd_wait(int argc, char **argv)
         printf("wait: unknown handle %u\n", handle);
         return;
     }
+    if (ret == -L4_EACCESS || ret == -L4_EBUSY || ret == -L4_ENOMEM) {
+        printf("wait: cannot wait for handle %u (err=%ld)\n", handle, ret);
+        return;
+    }
     task_unregister_proc(handle);
     klog_info(KLOG_SHELL, "wait: handle=%u exited code=%ld", handle, ret);
     printf("[%u] done  exit code: %ld\n", handle, ret);
@@ -997,6 +1001,10 @@ void cmd_kill(int argc, char **argv)
     long ret = spawnd->kill(handle);
     if (ret == -L4_ENOENT) {
         printf("kill: unknown handle %u\n", handle);
+        return;
+    }
+    if (ret < 0) {
+        printf("kill: cannot terminate handle %u (err=%ld)\n", handle, ret);
         return;
     }
     task_unregister_proc(handle);
