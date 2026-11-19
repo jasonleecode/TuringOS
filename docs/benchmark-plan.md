@@ -1,7 +1,7 @@
 # TuringOS 性能测试体系规划
 
 > 编写日期：2026-05-14  更新：2026-05-15
-> 现状：cyclictest 高精度版已完成（ns精度 + 1000桶直方图 + 百分位 + 标准差）；`run cyclictest -t 2 -l 300 -i 500` 运行时参数传递已修复并验证。
+> 当前实现测量固定周期的唤醒延迟、IPC 往返和吞吐。双核压力测试还校验子任务退出和跨核 IPC 的实际完成次数。
 
 ---
 
@@ -66,15 +66,15 @@ Linux rt-tests 套件中的 cyclictest 是实时系统调度延迟测试的工�
 
 | 功能 | 备注 |
 |------|------|
-| 基础 sleep→wakeup 延迟测量 | 使用 `l4_ipc_sleep_us` + KIP clock |
+| 周期唤醒延迟 | 以 KIP 单调时钟设定绝对截止时间，记录迟到时间及跳过的周期数 |
 | min / avg / max（per-thread + ALL） | |
-| **纳秒精度**（`l4_kip_clock_ns`） | 2026-05-15 完成；输出格式 "X.XXX us"（序列安全） |
-| **百分位统计**（p50/p90/p99/p99.9） | 2026-05-15 完成；直方图后处理，pct_x10 编码 |
-| **标准差**（integer Newton sqrt） | 2026-05-15 完成；无 libm 依赖，E[x²]-(E[x])² 公式 |
-| 1000 桶直方图（1µs/桶，overflow ≥999µs） | 2026-05-15 完成；原 100 桶扩展，agg_hist static 避免 4KB 栈 |
+| 读钟 | 使用 `l4_kip_clock_ns`，以 µs 显示三位小数。实际分辨率取决于平台 |
+| **百分位统计**（p50/p90/p99/p99.9） | 按最近秩法向上取整。首末秩取实测极值，普通桶取近似值，无法确定的溢出分位显示下界 |
+| 总体标准差 | 使用 Welford 在线算法，汇总时合并各线程的样本数、均值和方差 |
+| 1000 桶直方图（1µs/桶，overflow ≥999µs） | 单线程及汇总使用同一组桶边界 |
 | 多线程（pthread，最多 8 个） | |
 | 运行时可配置参数（-i/-l/-t/-p/-b） | `run cyclictest -t 2 -l 300 -i 500` 直接生效，无需重建镜像（2026-05-15 修复 spawnd UTCB 覆写 bug + readline 崩溃） |
-| breakmax 阈值 + overrun 计数 | |
+| `-b N` 延迟上限 | 完成采样后输出超阈值次数。N 为正且有超限时退出 1；默认 0 表示仅测量 |
 
 ### 2.2 缺失功能（按重要性排序）
 
@@ -126,7 +126,7 @@ cyclictest 只覆盖调度延迟这一个维度。一个完整的实时 OS 性�
 | IPC 往返延迟（round-trip） | µs | ✓ ipcbench（见下节） |
 | 跨核 IPC 延迟 vs 同核 | µs，需 SMP | ✓ ipcbench lat 模式自动对比 |
 | IPC 吞吐（消息/秒） | msg/s | ✓ ipcbench thru/hack 模式 |
-| 上下文切换时间 | µs | ✓ ipcbench ctx 模式（round-trip/2） |
+| IPC 半往返耗时估算 | µs | ✓ ipcbench ctx 模式（RTT/2，含 IPC 与调度开销） |
 | hackbench（N 对并发） | msg/s | ✓ ipcbench hack 模式 |
 | 大消息传输带宽 | MB/s（shared-DS 路径） | ✗ 待做 |
 
@@ -198,11 +198,11 @@ cyclictest 只覆盖调度延迟这一个维度。一个完整的实时 OS 性�
 
 ### 定位
 
-一个二进制，4 种测试模式，覆盖 IPC 延迟、上下文切换、吞吐、并发压力。
+一个二进制，4 种测试模式，覆盖 IPC 往返、半往返估算、单对和多对吞吐。
 
 ```
 run ipcbench              # 默认：lat 模式（同核 + 跨核自动对比）
-run ipcbench -m ctx       # 上下文切换时间
+run ipcbench -m ctx       # IPC 半往返耗时估算
 run ipcbench -m thru      # 单对吞吐
 run ipcbench -m hack -n 8 # hackbench（8 对并发）
 ```
@@ -221,9 +221,9 @@ server: l4_ipc_wait() → loop: l4_ipc_reply_and_wait()
 - Round 2：client=CPU0，server=CPU1（跨核）
 - 输出 overhead 绝对值与百分比
 
-#### ctx — 上下文切换
+#### ctx — IPC 半往返耗时估算
 
-与 lat 相同路径，将 round-trip/2 作为单次上下文切换时间。
+与 lat 使用相同路径，报告 RTT/2，包含内核收发、线程调度和用户态读钟开销。
 
 #### thru — 单对吞吐
 
@@ -232,7 +232,7 @@ server: l4_ipc_wait() → loop: l4_ipc_reply_and_wait()
 
 #### hack — N 对并发（hackbench 等价）
 
-创建 N 对 (client, server) pthread，每对独立 gate，同时跑 D 秒，汇总总 msg/s。
+创建 N 对 (client, server) pthread，每对使用独立 gate。全部预热后共同起跑，只统计统一截止时间内收到有效应答的往返，单位为 calls/s。
 压调度器吞吐极限。
 
 ### 参数
@@ -247,25 +247,16 @@ server: l4_ipc_wait() → loop: l4_ipc_reply_and_wait()
 
 ### 关键实现
 
-**Gate 创建：**
-```c
-// 1. 分配 cap slot
-auto gate = L4Re::Util::cap_alloc.alloc<L4::Ipc_gate>();
-// 2. 创建未绑定 gate
-l4_factory_create_gate(L4_BASE_FACTORY_CAP, gate.cap(), L4_INVALID_CAP, 0);
-// 3. 启动 server pthread
-pthread_create(&stid, ...);
-// 4. 绑定 gate → server 线程
-l4_ipc_gate_bind_thread(gate.cap(), pthread_l4_cap(stid), 0);
-// 5. 设置 CPU 亲和性
-sp.affinity = l4_sched_cpu_set(cpu_id, 0, 1);
-scheduler->run_thread(pthread_l4_cap(stid), sp);
+每个服务端线程启动并设置调度参数后，直接创建绑定到该线程的 gate。客户端使用有界超时并校验应答。任意线程创建、调度、IPC 或退出校验失败均返回非零。
+
+延迟和标准差由 `pkg/benchmark/latency_stats.h` 统一计算。在宿主机可运行确定性统计回归：
+
+```sh
+c++ -std=c++17 pkg/benchmark/tests/latency_stats_test.cc -o /tmp/turing-latency-test
+/tmp/turing-latency-test
 ```
 
-**同步**：gate 在 server 进入 `l4_ipc_wait()` 前会阻塞 client，天然同步。
-lat 模式第一次 IPC 作预热，丢弃计时结果。
-
-**统计**：复用 cyclictest 的 `isqrt_ull()`、`percentile_ns()`、`pr_us()` 逻辑。
+`tools/ci_smp_smoke.sh` 每轮检查 SMP 标记、各 spawner 的最少成功退出数、成功跨核应答数和错误数。
 
 **SMP 检测**：跑 cross-core 前查询 `l4_scheduler_info()`，CPU1 不可用则 skip。
 

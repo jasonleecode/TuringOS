@@ -14,7 +14,7 @@
 #   反复在 QEMU 无显示模式下启动 `smp-spawn-bench` entry（spawnd 反复
 #   create/destroy 子任务 + 跨核 IPC 噪声，专门压 preemption_point() 窗口）。
 #   每轮判定：
-#     PASS   — 串口出现 "PASS ... without kernel panic"
+#     PASS   — 双核负载完成，每个 spawner 成功退出子任务，跨核 IPC 收到有效应答
 #     CRASH  — 出现 schedule_in_progress / JDB 进入横幅（提前退出）
 #     HANG   — 超时内既无 PASS 也无崩溃签名（JDB 静默死循环也算失败）
 #     MISCFG — bench 报告 SMP=no（测试无意义，按失败处理）
@@ -23,7 +23,7 @@
 #
 # 注意（避免误报）
 #   bench 自身会打印 "kernel panic = fix regressed" 和 "without kernel
-#   panic"，因此**唯一**的通过判据是 PASS 行；崩溃签名只用专属 token
+#   panic"，因此同时校验 PASS 行和负载计数；崩溃签名只用专属 token
 #   （schedule_in_progress / JDB 横幅），绝不用裸 "panic"。
 #
 # 用法
@@ -91,7 +91,8 @@ strip_ansi='s/\x1b\[[0-9;]*m//g'
 
 PASS_RE='PASS.*without kernel panic'
 SMP_OK_RE='SMP=yes'
-SMP_NO_RE='SMP=no'
+WORK_RE='SMP_WORK spawners=[1-9][0-9]* min_spawns=[1-9][0-9]* ipc_ok=[1-9][0-9]* errors=0[[:space:]]*$'
+FAIL_RE='SMP=no|\[benchmark\] FAIL'
 # 崩溃专属签名——绝不含 bench 自己的 "panic" 字样
 CRASH_RE='schedule_in_progress|Return reboots, .k. enters|enters the L4 kernel debugger|Assertion failed|: ASSERTION|Cpu#?[0-9]+.*(halt|stuck)'
 
@@ -116,18 +117,7 @@ run_one() {
         fi
         local txt
         txt="$(sed "$strip_ansi" "$log" 2>/dev/null)"
-        if grep -qE "$CRASH_RE" <<<"$txt"; then
-            REASON="$(grep -aoE "$CRASH_RE" <<<"$txt" | head -1)"
-            result=1; break
-        fi
-        if grep -qE "$PASS_RE" <<<"$txt"; then
-            if grep -qE "$SMP_NO_RE" <<<"$txt"; then
-                REASON="bench 报告 SMP=no"; result=3
-            else
-                result=0
-            fi
-            break
-        fi
+        if grep -qE "$CRASH_RE|$FAIL_RE|$PASS_RE" <<<"$txt"; then break; fi
         sleep 1
         waited=$((waited + 1))
     done
@@ -138,20 +128,21 @@ run_one() {
     kill -KILL "$pid" 2>/dev/null
     wait "$pid" 2>/dev/null
 
-    # 超时且未判定
-    if [ "$waited" -ge "$TIMEOUT" ] && [ "$result" -eq 2 ]; then
-        local txt
-        txt="$(sed "$strip_ansi" "$log" 2>/dev/null)"
-        if grep -qE "$PASS_RE" <<<"$txt"; then result=0
-        elif grep -qE "$CRASH_RE" <<<"$txt"; then
-            REASON="$(grep -aoE "$CRASH_RE" <<<"$txt" | head -1)"; result=1
+    # 正常退出和超时都使用相同判据，崩溃优先。
+    local txt
+    txt="$(sed "$strip_ansi" "$log")"
+    if grep -qE "$CRASH_RE" <<<"$txt"; then
+        REASON="$(grep -aoE "$CRASH_RE" <<<"$txt" | head -1)"; result=1
+    elif grep -qE "$FAIL_RE" <<<"$txt"; then
+        REASON="负载失败或缺少在线 CPU"; result=3
+    elif grep -qE "$PASS_RE" <<<"$txt"; then
+        if grep -qE "$SMP_OK_RE" <<<"$txt" && grep -qE "$WORK_RE" <<<"$txt"; then
+            result=0
         else
-            REASON="超时 ${TIMEOUT}s 无 PASS（疑似 JDB 静默死循环）"; result=2
+            REASON="缺少双核、各 spawner 或跨核 IPC 的完成证据"; result=3
         fi
-    fi
-    # 校验确实跑在 SMP 模式
-    if [ "$result" -eq 0 ] && ! grep -qE "$SMP_OK_RE" <<<"$(sed "$strip_ansi" "$log")"; then
-        REASON="未检测到 SMP=yes（镜像可能单核运行）"; result=3
+    else
+        REASON="未收到测试完成标记"; result=2
     fi
     return "$result"
 }
@@ -197,7 +188,7 @@ if [ "$fail" -gt 0 ]; then
     echo " 失败日志:"
     for l in "${FAILED_LOGS[@]}"; do echo "   $l"; done
     echo "=========================================="
-    echo "FAIL — 调度器在 SMP 下仍不稳定"
+    echo "FAIL — SMP 基准未通过，原因见各轮结果"
     exit 1
 fi
 
