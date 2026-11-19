@@ -29,6 +29,7 @@ extern "C" {
 #include <l4/re/rm>
 #include <l4/re/util/unique_cap>
 
+#include <fcntl.h>
 #include <string.h>
 #include <stdio.h>
 #include <new>
@@ -173,14 +174,20 @@ make_dirinfo(const char *dir_path, L4::Ipc::Snd_fpage &snd_cap)
 // Path helper
 // ---------------------------------------------------------------------------
 
-void Ext4_namespace::build_path(char *out, size_t outsz,
-                                 const char *name, size_t namelen) const
+bool Ext4_namespace::build_path(char *out, size_t size, const char *name, size_t n) const
 {
-  size_t plen = strlen(_prefix);
-  if (plen == 1 && _prefix[0] == '/')
-    snprintf(out, outsz, "/%.*s", (int)namelen, name);
-  else
-    snprintf(out, outsz, "%s/%.*s", _prefix, (int)namelen, name);
+  while (n && *name == '/') { ++name; --n; }
+  if (!n || memchr(name, 0, n)) return false;
+  size_t start = 0;
+  for (size_t i = 0; i <= n; ++i) {
+    if (i < n && name[i] != '/') continue;
+    size_t len = i - start;
+    if (!len || (len == 1 && name[start] == '.')
+        || (len == 2 && !memcmp(name + start, "..", 2))) return false;
+    start = i + 1;
+  }
+  int len = snprintf(out, size, "%s/%.*s", strcmp(_prefix, "/") ? _prefix : "", (int)n, name);
+  return len >= 0 && (size_t)len < size && len < 256;
 }
 
 // ---------------------------------------------------------------------------
@@ -192,7 +199,7 @@ Ext4_namespace::op_unlink(L4Re::Namespace::Rights,
                            Name_buffer const &name)
 {
   char path[512];
-  build_path(path, sizeof(path), name.data, name.length);
+  if (!build_path(path, sizeof(path), name.data, name.length)) return -L4_EINVAL;
 
   if (ext4_fremove(path) == EOK || ext4_dir_rm(path) == EOK)
     return ext4_cache_flush(path) == EOK ? L4_EOK : -L4_EIO;
@@ -208,10 +215,9 @@ Ext4_namespace::op_ext_mkdir(Ext4_dir_ops::Rights,
                               L4::Ipc::Array_ref<char const, unsigned long> const &path)
 {
   char pbuf[512];
-  size_t n = path.length < sizeof(pbuf) - 1 ? path.length : sizeof(pbuf) - 1;
-  memcpy(pbuf, path.data, n);
-  pbuf[n] = '\0';
+  if (!build_path(pbuf, sizeof(pbuf), path.data, path.length)) return -L4_EINVAL;
 
+  if (ext4_inode_exist(pbuf,EXT4_DE_UNKNOWN) == EOK) return -L4_EEXIST;
   int r = ext4_dir_mk(pbuf);
   if (r != EOK)
     {
@@ -228,9 +234,7 @@ Ext4_namespace::op_ext_unlink(Ext4_dir_ops::Rights,
                                L4::Ipc::Array_ref<char const, unsigned long> const &path)
 {
   char pbuf[512];
-  size_t n = path.length < sizeof(pbuf) - 1 ? path.length : sizeof(pbuf) - 1;
-  memcpy(pbuf, path.data, n);
-  pbuf[n] = '\0';
+  if (!build_path(pbuf, sizeof(pbuf), path.data, path.length)) return -L4_EINVAL;
 
   if (ext4_fremove(pbuf) == EOK || ext4_dir_rm(pbuf) == EOK)
     return ext4_cache_flush(pbuf) == EOK ? L4_EOK : -L4_EIO;
@@ -270,21 +274,7 @@ Ext4_namespace::op_query(L4Re::Namespace::Rights,
 
   // ---- Build the absolute lwext4 path: _prefix + "/" + component ----------
   char path[512];
-  size_t plen = strlen(_prefix);
-  // _prefix is either "/" or "/subdir" — avoid double slash at root.
-  if (plen == 1 && _prefix[0] == '/')
-    {
-      path[0] = '/';
-      memcpy(path + 1, name.data, part);
-      path[part + 1] = '\0';
-    }
-  else
-    {
-      memcpy(path, _prefix, plen);
-      path[plen] = '/';
-      memcpy(path + plen + 1, name.data, part);
-      path[plen + 1 + part] = '\0';
-    }
+  if (!build_path(path, sizeof(path), name.data, part)) return -L4_EINVAL;
 
   // ---- Check if path is a directory ---------------------------------------
   // Return a child Ext4_namespace rooted at `path` so opendir() and ls work.
@@ -357,4 +347,56 @@ Ext4_namespace::op_query(L4Re::Namespace::Rights,
 
   out_name->length = 0;
   return L4_EOK;
+}
+
+long Ext4_namespace::op_ext_open(Ext4_dir_ops::Rights, L4::Ipc::Array_ref<char const,unsigned long> const &name,
+                                 unsigned flags,unsigned &directory,L4::Ipc::Snd_fpage &object)
+{
+  char path[256];
+  if (!build_path(path,sizeof(path),name.data,name.length)) return -L4_EINVAL;
+  directory = ext4_inode_exist(path,EXT4_DE_DIR)==EOK;
+  if (directory) {
+    if ((flags & O_ACCMODE) != O_RDONLY) return -EISDIR;
+    object = L4::Ipc::Snd_fpage(obj_cap(), L4_CAP_FPAGE_R);
+    return 0;
+  }
+  if (flags & O_DIRECTORY) return -ENOTDIR;
+  if ((flags & (O_CREAT|O_EXCL)) == (O_CREAT|O_EXCL) && ext4_inode_exist(path,EXT4_DE_REG_FILE)==EOK)
+    return -EEXIST;
+  auto file = new(std::nothrow) Ext4_file_svr(_registry,path);
+  if (!file) return -ENOMEM;
+  int rc = file->open_file(flags & (O_ACCMODE|O_CREAT|O_TRUNC));
+  if (rc) { delete file; return -rc; }
+  auto cap = _registry->register_obj(file);
+  if (!cap.is_valid()) { delete file; return -ENOMEM; }
+  object = L4::Ipc::Snd_fpage(cap,L4_CAP_FPAGE_RWS);
+  return 0;
+}
+
+long Ext4_namespace::op_ext_remove(Ext4_dir_ops::Rights,
+                                   L4::Ipc::Array_ref<char const,unsigned long> const &name,
+                                   unsigned directory)
+{
+  char path[256];
+  if (!build_path(path,sizeof(path),name.data,name.length)) return -EINVAL;
+  int rc;
+  if (directory) {
+    ext4_dir dir;
+    rc = ext4_dir_open(&dir,path);
+    if (rc != EOK) return -rc;
+    bool empty = true;
+    while (const ext4_direntry *e = ext4_dir_entry_next(&dir)) {
+      if (e->name_length == 1 && e->name[0] == '.') continue;
+      if (e->name_length == 2 && !memcmp(e->name,"..",2)) continue;
+      empty = false;
+      break;
+    }
+    ext4_dir_close(&dir);
+    if (!empty) return -ENOTEMPTY;
+    rc = ext4_dir_rm(path);
+  } else {
+    if (ext4_inode_exist(path,EXT4_DE_DIR) == EOK) return -EISDIR;
+    rc = ext4_fremove(path);
+  }
+  return rc == EOK ? -ext4_cache_flush(path) : -rc;
 }

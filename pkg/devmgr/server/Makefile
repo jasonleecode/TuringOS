@@ -3,7 +3,7 @@ L4DIR        ?= $(PKGDIR)/../../..
 
 TARGET        = devmgr
 SRC_CC        = main.cc
-REQUIRES_LIBS = l4util libstdc++
+REQUIRES_LIBS = l4util libstdc++ libpthread l4re-util turingos-interfaces
 
 # spawn_ipc.h (the Spawn_svr protocol used to launch drivers) + the shared
 # device model (device_table.h).

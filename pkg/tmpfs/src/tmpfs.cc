@@ -19,6 +19,7 @@
  */
 
 #include <l4/l4re_vfs/backend>
+#include <l4/re/env>
 #include <l4/cxx/ref_ptr>
 #include <l4/crtn/initpriorities.h>
 
@@ -407,6 +408,7 @@ struct Tmpfs_init
 {
   Tmpfs_init()
   {
+    if (L4Re::Env::env()->get_cap<void>("tmp").is_valid()) return;
     Ref_ptr<File> root = cxx::make_ref_obj<Tmpfs_dir>();
     // Mount path is relative to the VFS root with no leading slash (matching
     // devfs's mount("dev", ...)); a leading slash makes Vfs::mount's

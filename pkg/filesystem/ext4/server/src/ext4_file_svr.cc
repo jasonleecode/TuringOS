@@ -60,19 +60,20 @@ Ext4_file_svr::~Ext4_file_svr()
 // applied separately via op_ftruncate driven by the client's O_TRUNC).
 bool Ext4_file_svr::ensure_open()
 {
-  if (_f_open)
-    return true;
-  if (ext4_fopen2(&_f, _path, O_RDWR | O_CREAT) != EOK)
-    {
-      printf("[ext4svr] fopen '%s' failed\n", _path);
-      return false;
-    }
+  return _f_open || open_file(O_RDWR | O_CREAT) == EOK;
+}
+
+int Ext4_file_svr::open_file(unsigned flags)
+{
+  if (!_ok) return ENOMEM;
+  int r = ext4_fopen2(&_f,_path,flags);
+  if (r != EOK) return r;
   if (ext4_cache_flush(_path) != EOK) {
     ext4_fclose(&_f);
-    return false;
+    return EIO;
   }
   _f_open = true;
-  return true;
+  return EOK;
 }
 
 l4_ret_t

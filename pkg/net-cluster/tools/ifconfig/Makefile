@@ -9,4 +9,6 @@ REQUIRES_LIBS = l4re-util libstdc++
 # links NO lwIP and holds NO sigma0 — it asks netd (which owns the stack) for
 # the interface listing.  The netd cap is forwarded to it by spawnd.
 
+REQUIRES_LIBS += task_io
+LDFLAGS += -u task_io_init
 include $(L4DIR)/mk/prog.mk

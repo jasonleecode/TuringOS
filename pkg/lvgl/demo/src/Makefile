@@ -11,4 +11,6 @@ REQUIRES_LIBS = lvgl-port
 # Pull in the ext4_client TU that registers the Ext4_file_ops VFS factory.
 LDFLAGS += -u ext4_client_module_init
 
+REQUIRES_LIBS += task_io
+LDFLAGS += -u task_io_init
 include $(L4DIR)/mk/prog.mk

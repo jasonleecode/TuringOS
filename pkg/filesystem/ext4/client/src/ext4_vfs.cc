@@ -12,6 +12,8 @@
 #include <l4/crtn/initpriorities.h>
 
 #include <string.h>
+#include <cstdio>
+#include <initializer_list>
 #include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -51,6 +53,10 @@ Ext4_file_vfs::Ext4_file_vfs(L4::Cap<Ext4_file_ops> cap) noexcept
 
   _valid = true;
 }
+
+Ext4_file_vfs::Ext4_file_vfs(L4Re::Util::Unique_cap<Ext4_file_ops> &slot) noexcept
+: Ext4_file_vfs(slot.get())
+{ _slot = cxx::move(slot); }
 
 Ext4_file_vfs::~Ext4_file_vfs() noexcept
 {
@@ -201,6 +207,73 @@ static L4Re::Vfs::File_factory_t<Ext4_file_ops, Ext4_file_vfs>
   ext4_file_factory
   __attribute__((init_priority(INIT_PRIO_LATE)));
 
+// A POSIX directory rooted at the one namespace capability handed to this task.
+class Shared_dir : public L4Re::Vfs::Be_file {
+  using File = L4Re::Vfs::File;
+  using Ref = cxx::Ref_ptr<File>;
+  const char *mount_name;
+  char prefix[256]{};
+  L4::Cap<Ext4_dir_ops> ns;
+  Ref listing;
+
+  bool path(const char *name,char (&out)[256]) const {
+    int n=snprintf(out,sizeof(out),"%s%s%s",prefix,*prefix?"/":"",name);
+    return n>=0 && static_cast<size_t>(n)<sizeof(out);
+  }
+  int remove(const char *name,bool directory) {
+    char p[256];
+    if (!path(name,p)) return -ENAMETOOLONG;
+    return ns->ext_remove({strlen(p),p},directory);
+  }
+public:
+  Shared_dir(const char *mount,const char *relative,L4::Cap<Ext4_dir_ops> cap)
+    : mount_name(mount),ns(cap) { strcpy(prefix,relative); }
+  int fstat(struct stat64 *b) const noexcept override {
+    memset(b,0,sizeof(*b)); b->st_mode=S_IFDIR|0755; return 0;
+  }
+  int mkdir(const char *name,mode_t) noexcept override {
+    char p[256];
+    if (!path(name,p)) return -ENAMETOOLONG;
+    return ns->ext_mkdir({strlen(p),p});
+  }
+  int unlink(const char *name) noexcept override { return remove(name,false); }
+  int rmdir(const char *name) noexcept override { return remove(name,true); }
+  ssize_t getdents(char *buf,size_t size) noexcept override {
+    if (!listing) {
+      char raw[280];
+      snprintf(raw,sizeof(raw),"%s%s%s",mount_name,*prefix?"/":"",prefix);
+      int r=L4Re::Vfs::vfs_ops->get_root()->get_entry(raw,O_RDONLY,0,&listing);
+      if (r<0) return r;
+    }
+    return listing->getdents(buf,size);
+  }
+  int get_entry(const char *name,int flags,mode_t,Ref *result) noexcept override {
+    if (!*name || !strcmp(name,".")) {
+      *result=cxx::make_ref_obj<Shared_dir>(mount_name,prefix,ns);
+      return *result ? 0 : -ENOMEM;
+    }
+    char p[256];
+    if (!path(name,p)) return -ENAMETOOLONG;
+    auto slot=L4Re::Util::make_unique_cap<Ext4_file_ops>();
+    if (!slot.is_valid()) return -ENOMEM;
+    unsigned directory=0;
+    L4::Ipc::Snd_fpage object;
+    long rc=Ext4_dir_ops::ext_open_t::call(ns,L4::Ipc::Small_buf(slot.get()),L4::Ipc::Array<char const,unsigned long>(strlen(p),p),
+                                            (unsigned)flags,directory,object);
+    if (rc<0) return rc;
+    if (directory) {
+      *result=cxx::make_ref_obj<Shared_dir>(mount_name,p,ns);
+      return *result ? 0 : -ENOMEM;
+    }
+    auto file = cxx::make_ref_obj<Ext4_file_vfs>(slot);
+    if (!file) { slot->release(); return -ENOMEM; }
+    if (!file->valid()) return -EIO;
+    file->set_status_flags(flags);
+    *result=file;
+    return 0;
+  }
+};
+
 // Registration wrapper: runs after VFS is initialised (INIT_PRIO_VFS_INIT),
 // before any library constructors that might open files.
 struct Ext4_vfs_init
@@ -209,6 +282,10 @@ struct Ext4_vfs_init
   {
     auto ptr = cxx::ref_ptr(&ext4_file_factory);
     L4Re::Vfs::vfs_ops->register_file_factory(ptr);
+    for (auto name : {"ext4","tmp","data"}) {
+      auto ns=L4Re::Env::env()->get_cap<Ext4_dir_ops>(name);
+      if (ns.is_valid()) L4Re::Vfs::vfs_ops->mount(name,cxx::make_ref_obj<Shared_dir>(name,"",ns));
+    }
     ptr.release(); // prevent deletion of the static object
   }
 } _ext4_vfs_init __attribute__((init_priority(INIT_PRIO_LATE + 1)));

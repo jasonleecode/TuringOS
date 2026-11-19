@@ -170,7 +170,7 @@ int main()
     }
 
   auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
-  if (dev.is_valid() && dev->register_obj("radio0", gate) >= 0)
+  if (dev.is_valid() && dev->register_obj("radio0", gate, L4Re::Namespace::Rw | L4Re::Namespace::Overwrite) >= 0)
     printf("[tef6686hn-server] registered as dev/radio0\n");
   else
     printf("[tef6686hn-server] WARN: 'dev' registry unavailable — not discoverable\n");

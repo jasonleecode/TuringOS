@@ -76,6 +76,7 @@ struct Spawn_model_base : public Ldr::Base_app_model<Spawn_stack>
   l4_cap_idx_t _console_cap = L4_INVALID_CAP;
   void set_console_cap(l4_cap_idx_t c) { _console_cap = c; }
 
+  unsigned grants = 0;
   Spawn_model_base();
 
   // Set the argv/envp that will be pushed onto the child's startup stack.

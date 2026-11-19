@@ -1,4 +1,5 @@
 #include "app_model.h"
+#include "app_policy.h"
 
 #include <l4/re/env>
 #include <l4/re/util/cap_alloc>
@@ -290,18 +291,11 @@ void Spawn_model_base::get_task_caps(L4::Cap<L4::Factory> *factory,
   *thread  = _child_thread_cap.get();
 }
 
-static bool forward_cap(l4re_env_cap_entry_t const &e)
-{
-  return l4_is_valid_cap(e.cap)
-         && strncmp(e.name, "svr", sizeof(e.name)) != 0
-         && strncmp(e.name, "spawnd", sizeof(e.name)) != 0;
-}
-
 l4_cap_idx_t Spawn_model_base::push_initial_caps(l4_cap_idx_t start)
 {
   l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
   for (; e && e->flags != ~0UL; ++e) {
-    if (!forward_cap(*e)) continue;
+    if (!l4_is_valid_cap(e->cap) || !App_policy::forward(e->name, grants)) continue;
     l4re_env_cap_entry_t child_e;
     child_e.cap   = start;
     child_e.flags = 0;
@@ -328,7 +322,7 @@ void Spawn_model_base::map_initial_caps(L4::Cap<L4::Task> task, l4_cap_idx_t sta
 {
   l4re_env_cap_entry_t const *e = L4Re::Env::env()->initial_caps();
   for (; e && e->flags != ~0UL; ++e) {
-    if (!forward_cap(*e)) continue;
+    if (!l4_is_valid_cap(e->cap) || !App_policy::forward(e->name, grants)) continue;
     task->map(L4Re::This_task,
               L4::Cap<void>(e->cap).fpage(L4_CAP_FPAGE_RWS),
               L4::Cap<void>(start).snd_base());

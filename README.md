@@ -137,6 +137,25 @@ run lvgl-desktop &
 
 > BBB (AM335x) 仅支持真机，使用 `--check` 可验证镜像结构。
 
+## virt 镜像中的 Shell 和应用
+
+在默认的 `native-shell` 启动项中，`cd`、`history`、`wait` 操作当前会话。`echo`、`cat`、`uname`、`info`、`clear` 和网络工具按名字从 ROM 启动，继承工作目录。独立程序可以用 `|`、`<`、`>`、`>>` 组合。不同进程共享 2 MiB 内存盘 `/tmp`，重启后清空。
+
+```sh
+ifconfig | cat >/tmp/network
+cat /tmp/network
+svc restart temp0
+app install logger v1 /rom/exectest data
+app run logger --caps /data/log
+app install calc v1 /ext4/calc.wasm
+app status calc
+app run calc
+```
+
+`app install NAME VERSION FILE` 支持本架构 ELF 和导出 main 入口的 WASM，单文件上限为 4 MiB。安装新版本后，`app rollback NAME` 可以切回上一份通过校验的版本。可用 `sha256=HEX` 指定预期摘要。安装的 ELF 默认没有可选服务权限，可以显式授予 `net`、`tmp` 或 `data`。`data` 只挂载共享应用数据目录 `/data`，对应磁盘上的 `/ext4/data`。WASM 使用 WAMR 内置导入接口。
+
+新程序在 Makefile 中加入 `REQUIRES_LIBS += task_io` 和 `LDFLAGS += -u task_io_init`，即可接入标准输入输出管道和 IPv4 TCP 客户端 socket。需要访问 ext4、共享 `/tmp` 或 `/data` 时，再加入 `ext4_client` 和 `-u ext4_client_module_init`。使用 `python3 -u tools/ci_system_services.py` 可在临时磁盘上运行两次启动的系统回归，宿主机需安装 QEMU、e2fsprogs 和 Python pexpect。
+
 ## 真机部署（BeagleBone Black）
 
 1. 构建 BBB 镜像：

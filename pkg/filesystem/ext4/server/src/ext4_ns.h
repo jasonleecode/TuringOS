@@ -38,7 +38,7 @@ struct Ext4_ns_iface
     L4Re::Namespace::register_obj_t,
     L4Re::Namespace::unlink_t,
     Ext4_dir_ops::ext_mkdir_t,
-    Ext4_dir_ops::ext_unlink_t
+    Ext4_dir_ops::ext_unlink_t, Ext4_dir_ops::ext_open_t, Ext4_dir_ops::ext_remove_t
   >;
 };
 
@@ -86,9 +86,13 @@ public:
   l4_ret_t op_ext_unlink(Ext4_dir_ops::Rights,
                           L4::Ipc::Array_ref<char const, unsigned long> const &path);
 
+  long op_ext_remove(Ext4_dir_ops::Rights, L4::Ipc::Array_ref<char const, unsigned long> const &name,
+                     unsigned directory);
+  long op_ext_open(Ext4_dir_ops::Rights, L4::Ipc::Array_ref<char const, unsigned long> const &name,
+                   unsigned flags, unsigned &directory, L4::Ipc::Snd_fpage &object);
 private:
   // Build absolute ext4 path from _prefix + leaf name.
-  void build_path(char *out, size_t outsz,
+  bool build_path(char *out, size_t outsz,
                   const char *name, size_t namelen) const;
 
   L4Re::Util::Object_registry *_registry;

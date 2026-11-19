@@ -50,7 +50,7 @@ static int format_disk(struct ext4_blockdev *bd)
 {
     printf("[ext4] No superblock found – formatting with ext4\n");
 
-    struct ext4_fs        fs;
+    struct ext4_fs        fs{};
     struct ext4_mkfs_info info;
     memset(&info, 0, sizeof(info));
     info.block_size = 4096;   // 4 KB blocks (standard ext4 block size)
@@ -116,10 +116,18 @@ static Ext4_namespace ext4_ns(server.registry());
 
 // ----- main -----
 
-int main(int /*argc*/, char const *const * /*argv*/)
+ext4_blockdev *ram_blockdev();
+
+int main(int argc, char const *const *argv)
 {
     printf("[ext4] ext4fs server starting\n");
 
+    bool temporary = argc == 2 && !strcmp(argv[1], "--tmp");
+    ext4_blockdev *bd = nullptr;
+    if (temporary) {
+        bd = ram_blockdev();
+        if (!bd || format_disk(bd) != EOK) return 1;
+    } else {
     // Get the pre-allocated VirtIO device cap (created by Ned via block driver factory).
     auto vio_cap = L4Re::Env::env()->get_cap<L4virtio::Device>("blk");
     if (!vio_cap.is_valid())
@@ -139,7 +147,8 @@ int main(int /*argc*/, char const *const * /*argv*/)
         return 1;
     }
 
-    struct ext4_blockdev *bd = virtio_blockdev_get();
+    bd = virtio_blockdev_get();
+    }
 
     // Register the block device with lwext4.
     int r = ext4_device_register(bd, DEV_NAME);
@@ -175,7 +184,7 @@ int main(int /*argc*/, char const *const * /*argv*/)
     printf("[ext4] Mounted %s at %s\n", DEV_NAME, MOUNT_POINT);
 
     // Run a quick write/read self-test (creates /hello.txt for clients to read).
-    r = run_io_test();
+    r = temporary ? 0 : run_io_test();
     if (r != 0)
         printf("[ext4] WARNING: I/O self-test failed (%d) – continuing anyway\n", r);
 
@@ -192,6 +201,12 @@ int main(int /*argc*/, char const *const * /*argv*/)
         printf("[ext4] Namespace server ready on 'svr' cap\n");
     }
 
+    if (!temporary && L4Re::Env::env()->get_cap<void>("data").is_valid()) {
+        static Ext4_namespace app_data(server.registry(), "/data");
+        if (ext4_inode_exist("/data", EXT4_DE_DIR) != EOK && ext4_dir_mk("/data") != EOK)
+            return 1;
+        if (!server.registry()->register_obj(&app_data, "data").is_valid()) return 1;
+    }
     printf("[ext4] Entering server loop (filesystem stays mounted)\n");
     server.loop();
 

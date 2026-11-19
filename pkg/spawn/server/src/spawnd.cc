@@ -1,4 +1,5 @@
 #include "spawnd.h"
+#include "app_policy.h"
 
 #include <l4/re/error_helper>
 #include <l4/sys/ipc.h>
@@ -46,6 +47,8 @@ Spawnd::Child_endpoint &Spawnd::endpoint(Child_task *task)
 
 void Spawnd::free_child(Child_task *task)
 {
+    _pipes.release(task->handle);
+    if (_app_lock == task->handle) _app_lock = 0;
     _registry->unregister_obj(&endpoint(task));
     _table.free(task->handle);
 }
@@ -84,16 +87,18 @@ void *Spawnd::reaper_main(void *arg)
             l4_uint32_t handle = (l4_uint32_t)(label >> 2);
             l4_msg_regs_t *mr = l4_utcb_mr_u(u);
             int  nw   = l4_msgtag_words(tag);
-            long code = (nw >= 2) ? (long)mr->mr[1]
-                      : (nw >= 1) ? (long)mr->mr[0] : 0;
+            // Parent::signal encodes opcode, signal number, then exit status.
+            bool exited = tag.label() == L4RE_PROTO_PARENT && nw >= 3
+                          && mr->mr[0] == 0 && mr->mr[1] == 0;
+            long code = exited ? static_cast<long>(mr->mr[2]) : 0;
             pthread_mutex_lock(&self->_mtx);
             Child_task *t = self->_table.find(handle);
-            if (t && t->state != Child_task::EXITED) {
+            if (exited && t && t->state != Child_task::EXITED) {
                 /* Accept exit IPC in LOADING state too: child can exit
                  * before do_spawn transitions the slot to RUNNING. */
                 t->state     = Child_task::EXITED;
                 t->exit_code = code;
-                if (t->waiter) self->_exit_notification.obj_cap()->trigger();
+                self->_exit_notification.obj_cap()->trigger();
                 printf("[spawnd] reaper: [%u] '%s' exited (code=%ld)\n",
                        t->handle, t->name, code);
             }
@@ -132,7 +137,7 @@ void Spawnd::reap_once()
         if (l4_msgtag_has_error(r)) {
             t->state     = Child_task::EXITED;
             t->exit_code = -1;
-            if (t->waiter) _exit_notification.obj_cap()->trigger();
+            _exit_notification.obj_cap()->trigger();
             printf("[spawnd] reaper: [%u] '%s' crashed (thread dead)\n",
                    t->handle, t->name);
         }
@@ -152,7 +157,9 @@ int Spawnd::unpack_args(const char *buf, size_t len,
 
     while (p < end && *p && argc < max_argc) {
         out_argv[argc++] = const_cast<char *>(p);
-        p += strlen(p) + 1;
+        auto end_arg = static_cast<const char *>(memchr(p, 0, end - p));
+        if (!end_arg) { out_argv[0] = nullptr; return -1; }
+        p = end_arg + 1;
     }
     out_argv[argc] = nullptr;
     return argc;
@@ -162,10 +169,10 @@ int Spawnd::unpack_args(const char *buf, size_t len,
 /* do_spawn — load ELF and start child                                 */
 /* ------------------------------------------------------------------ */
 
-bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
+bool Spawnd::load_image(Child_task const *slot, const char *path_str, char *const *argv,
                         l4_cap_idx_t *task, l4_cap_idx_t *thread,
                         l4_cap_idx_t *rm, l4_cap_idx_t *gate,
-                        l4_cap_idx_t console, l4_cap_idx_t service_gate)
+                        l4_cap_idx_t console, l4_cap_idx_t service_gate, unsigned grants)
 {
     int argc = 0;
     if (argv) while (argv[argc]) argc++;
@@ -174,12 +181,18 @@ bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
      * exec().  The env array + buffer only need to outlive loader.launch(),
      * which copies the strings onto the child's startup stack. */
     char handle_env[32];
+    const auto h = slot->handle;
     snprintf(handle_env, sizeof(handle_env), "SPAWND_HANDLE=%u", h);
-    const char *envp[2] = { handle_env, nullptr };
+    char input_env[32], output_env[32], cwd_env[272];
+    snprintf(input_env,sizeof(input_env),"TURING_STDIN=%u",slot->input);
+    snprintf(output_env,sizeof(output_env),"TURING_STDOUT=%u",slot->output);
+    snprintf(cwd_env,sizeof(cwd_env),"PWD=%s",slot->cwd);
+    const char *envp[] = {handle_env, input_env, output_env, cwd_env, nullptr};
 
     try {
         Spawn_app_model am;
         am.spawnd_cap = service_gate;
+        am.grants = grants;
         am.set_args(argc, const_cast<const char *const *>(argv), envp);
         if (l4_is_valid_cap(console))
             am.set_console_cap(console);   /* telnetd vcon etc. */
@@ -210,19 +223,43 @@ bool Spawnd::load_image(l4_uint32_t h, const char *path_str, char *const *argv,
 
 Child_task *Spawnd::do_spawn(const char *path_str,
                               char *const *argv,
-                              Child_task::Console console)
+                              unsigned flags, Child_task::Console console, unsigned input,
+                              unsigned output, const char *cwd)
 {
     /* 1. Allocate slot (state = LOADING) under lock. */
     pthread_mutex_lock(&_mtx);
+    Child_task *requester = _table.find(_caller);
+    if (*path_str == '/' && requester && !(requester->delegation & App_policy::Disk)) {
+        pthread_mutex_unlock(&_mtx);
+        return nullptr;
+    }
     Child_task *slot = _table.alloc(path_str);
     if (slot) {
         slot->owner = _caller;
         Child_task *parent = _table.find(_caller);
+        snprintf(slot->cwd,sizeof(slot->cwd),"%s",cwd ? cwd : (parent ? parent->cwd : "/"));
+        slot->input = slot->output = 0;
+        if (input == ~0u) input = parent ? parent->input : 0;
+        if (output == ~0u) output = parent ? parent->output : 0;
+        int in = _pipes.inherit(_caller, input, slot->handle, false);
+        int out = _pipes.inherit(_caller, output, slot->handle, true);
+        if (in < 0 || out < 0) {
+            _pipes.release(slot->handle);
+            _table.free(slot->handle);
+            pthread_mutex_unlock(&_mtx);
+            return nullptr;
+        }
+        slot->input = in;
+        slot->output = out;
+        unsigned ceiling = parent ? parent->delegation : App_policy::All;
+        slot->grants = App_policy::profile(path_str, flags) & ceiling;
+        slot->delegation = App_policy::delegation(path_str, slot->grants, ceiling);
         slot->console = (!console.is_valid() && parent) ? parent->console : console;
         Child_endpoint &ep = endpoint(slot);
         ep.service = this;
         ep.handle = slot->handle;
         if (!_registry->register_obj(&ep).is_valid()) {
+            _pipes.release(slot->handle);
             _table.free(slot->handle);
             slot = nullptr;
         }
@@ -239,8 +276,8 @@ Child_task *Spawnd::do_spawn(const char *path_str,
 
     /* 2. Load ELF without holding _mtx (many internal IPC calls). */
     l4_cap_idx_t task_idx, thread_idx, rm_idx, gate_idx;
-    if (!load_image(h, path_str, argv, &task_idx, &thread_idx, &rm_idx, &gate_idx,
-                    slot->console.get().cap(), endpoint(slot).obj_cap().cap())) {
+    if (!load_image(slot, path_str, argv, &task_idx, &thread_idx, &rm_idx, &gate_idx,
+                    slot->console.get().cap(), endpoint(slot).obj_cap().cap(), slot->grants)) {
         pthread_mutex_lock(&_mtx);
         free_child(slot);
         pthread_mutex_unlock(&_mtx);
@@ -277,21 +314,20 @@ l4_ret_t Spawnd::op_exec(Spawn_svr::Rights,
                          L4::Ipc::Array_ref<char const> args)
 {
     if (!_caller || handle != _caller) return -L4_EACCESS;
-    if (path.length == 0) return -L4_EINVAL;
+    if (!path.length || path.length >= 512 || args.length > 1024) return -L4_EINVAL;
 
     /* Copy path + args out of the UTCB before any further IPC. */
     char path_buf[512];
-    size_t plen = path.length < sizeof(path_buf) - 1
-                  ? path.length : sizeof(path_buf) - 1;
+    size_t plen = path.length;
     memcpy(path_buf, path.data, plen);
     path_buf[plen] = '\0';
 
     char args_copy[1024];
-    size_t copy_len = args.length < sizeof(args_copy) ? args.length : sizeof(args_copy);
+    size_t copy_len = args.length;
     memcpy(args_copy, args.data, copy_len);
     static constexpr int MAX_ARGV = 64;
     char *argv[MAX_ARGV + 1];
-    unpack_args(args_copy, copy_len, argv, MAX_ARGV);
+    if (unpack_args(args_copy, copy_len, argv, MAX_ARGV) < 0) return -L4_EINVAL;
 
     /* Caller must be a live child of ours. */
     pthread_mutex_lock(&_mtx);
@@ -305,15 +341,21 @@ l4_ret_t Spawnd::op_exec(Spawn_svr::Rights,
     /* Load the new program into a fresh task, gate bound to reaper with the
      * SAME handle so wait/kill/exit-detection keep working. */
     l4_cap_idx_t task_idx, thread_idx, rm_idx, gate_idx;
-    if (!load_image(handle, path_buf, argv,
+    if (*path_buf == '/' && !(slot->delegation & App_policy::Disk)) return -L4_EACCESS;
+    unsigned grants = App_policy::profile(path_buf, slot->grants) & slot->delegation;
+    if (!load_image(slot, path_buf, argv,
                     &task_idx, &thread_idx, &rm_idx, &gate_idx,
-                    slot->console.get().cap(), endpoint(slot).obj_cap().cap()))
+                    slot->console.get().cap(), endpoint(slot).obj_cap().cap(), grants))
         return -L4_EIO;                  /* replies; caller keeps old image */
 
     /* Atomically swap the slot's caps.  Reassigning slot->task destroys the
      * OLD task (the caller) — its thread is blocked here in the exec IPC and
      * vanishes with the task, so we must not reply (ENOREPLY). */
     pthread_mutex_lock(&_mtx);
+    slot->delegation = App_policy::delegation(path_buf, grants, slot->delegation);
+    slot->grants = grants;
+    snprintf(slot->name,sizeof(slot->name),"%s",path_buf);
+    if (_app_lock == slot->handle) _app_lock = 0;
     // Only this dispatcher releases slots. A fast replacement may already
     // have reported its exit to the reaper while load_image was returning.
     slot->task        = L4Re::Util::Unique_del_cap<L4::Task>(
@@ -352,7 +394,10 @@ void Spawnd::finish_waiters()
     pthread_mutex_lock(&_mtx);
     for (int i = 0; i < Task_table::MAX; ++i) {
         Child_task *task = _table.at(i);
-        if (task->state == Child_task::EXITED && task->waiter) {
+        if (task->state != Child_task::EXITED) continue;
+        _pipes.release(task->handle);
+        if (_app_lock == task->handle) _app_lock = 0;
+        if (task->waiter) {
             task->waiter.reply(l4_msgtag(task->exit_code, 0, 0, 0));
             free_child(task);
         }
@@ -369,24 +414,23 @@ l4_ret_t Spawnd::op_spawn(Spawn_svr::Rights,
                            L4::Ipc::Array_ref<char const> args,
                            l4_uint32_t                    flags)
 {
-    if (path.length == 0) return -L4_EINVAL;
+    if (!path.length || path.length >= 512 || args.length > 1024) return -L4_EINVAL;
 
     char path_buf[512];
-    size_t plen = path.length < sizeof(path_buf) - 1
-                  ? path.length : sizeof(path_buf) - 1;
+    size_t plen = path.length;
     memcpy(path_buf, path.data, plen);
     path_buf[plen] = '\0';
 
     /* Copy args out of the UTCB before any further IPC. */
     char args_copy[1024];
-    size_t copy_len = args.length < sizeof(args_copy) ? args.length : sizeof(args_copy);
+    size_t copy_len = args.length;
     memcpy(args_copy, args.data, copy_len);
 
     static constexpr int MAX_ARGV = 64;
     char *argv[MAX_ARGV + 1];
-    unpack_args(args_copy, copy_len, argv, MAX_ARGV);
+    if (unpack_args(args_copy, copy_len, argv, MAX_ARGV) < 0) return -L4_EINVAL;
 
-    return spawn_result(do_spawn(path_buf, argv), flags);
+    return spawn_result(do_spawn(path_buf, argv, flags), flags);
 }
 
 long Spawnd::spawn_result(Child_task *slot, l4_uint32_t flags)
@@ -409,20 +453,19 @@ l4_ret_t Spawnd::op_spawn_con(Spawn_svr::Rights,
                               l4_uint32_t                    flags,
                               L4::Ipc::Snd_fpage             console)
 {
-    if (path.length == 0) return -L4_EINVAL;
+    if (!path.length || path.length >= 512 || args.length > 1024) return -L4_EINVAL;
 
     char path_buf[512];
-    size_t plen = path.length < sizeof(path_buf) - 1
-                  ? path.length : sizeof(path_buf) - 1;
+    size_t plen = path.length;
     memcpy(path_buf, path.data, plen);
     path_buf[plen] = '\0';
 
     char args_copy[1024];
-    size_t copy_len = args.length < sizeof(args_copy) ? args.length : sizeof(args_copy);
+    size_t copy_len = args.length;
     memcpy(args_copy, args.data, copy_len);
     static constexpr int MAX_ARGV = 64;
     char *argv[MAX_ARGV + 1];
-    unpack_args(args_copy, copy_len, argv, MAX_ARGV);
+    if (unpack_args(args_copy, copy_len, argv, MAX_ARGV) < 0) return -L4_EINVAL;
 
     /* The caller mapped its console (vcon) cap into our receive buffer. */
     l4_cap_idx_t console_cap = L4_INVALID_CAP;
@@ -434,7 +477,7 @@ l4_ret_t Spawnd::op_spawn_con(Spawn_svr::Rights,
     long r = server_iface()->realloc_rcv_cap(0);
     if (r < 0) return r;
     Child_task::Console received{L4::Cap<void>(console_cap)};
-    return spawn_result(do_spawn(path_buf, argv, received), flags);
+    return spawn_result(do_spawn(path_buf, argv, flags, received), flags);
 }
 
 l4_ret_t Spawnd::op_wait(Spawn_svr::Rights,
@@ -507,4 +550,54 @@ l4_ret_t Spawnd::op_task_stat(Spawn_svr::Rights,
     l4_thread_stats_time(thread_cap, &kc);
     cpu_us = (l4_uint64_t)kc;
     return L4_EOK;
+}
+
+long Spawnd::op_pipe_close(Spawn_svr::Rights, unsigned id)
+{
+    pthread_mutex_lock(&_mtx);
+    auto child = _table.find(_caller);
+    if (child) {
+        if (child->input == id) child->input = 0;
+        if (child->output == id) child->output = 0;
+    }
+    pthread_mutex_unlock(&_mtx);
+    return _pipes.close(_caller,id);
+}
+
+long Spawnd::op_pipe_read(Spawn_svr::Rights, unsigned id, unsigned limit, L4::Ipc::Array_ref<char> &bytes)
+{
+    long n = _pipes.read(_caller,id,_read_buf,std::min(limit,(unsigned)sizeof(_read_buf)));
+    if (n < 0) return n;
+    bytes = L4::Ipc::Array_ref<char>(n,_read_buf);
+    return 0;
+}
+
+long Spawnd::op_spawn_io(Spawn_svr::Rights, L4::Ipc::Array_ref<char const> path,
+                         L4::Ipc::Array_ref<char const> args, unsigned flags, unsigned input,
+                         unsigned output, L4::Ipc::Array_ref<char const> cwd)
+{
+    char program[512], directory[256], data[1024];
+    if (!path.length || path.length >= sizeof(program) || args.length > sizeof(data)
+        || !cwd.length || cwd.length >= sizeof(directory) || cwd.data[0] != '/') return -L4_EINVAL;
+    memcpy(program,path.data,path.length); program[path.length] = 0;
+    memcpy(directory,cwd.data,cwd.length); directory[cwd.length] = 0;
+    memcpy(data,args.data,args.length);
+    char *argv[65];
+    if (unpack_args(data,args.length,argv,64) < 0) return -L4_EINVAL;
+    return spawn_result(do_spawn(program,argv,flags,{},input,output,directory),flags);
+}
+
+long Spawnd::op_app_lock(Spawn_svr::Rights, unsigned acquire)
+{
+    pthread_mutex_lock(&_mtx);
+    auto task = _table.find(_caller);
+    bool allowed = task && (task->grants & App_policy::Disk)
+                   && !strcmp(App_policy::rom_name(task->name), "app");
+    pthread_mutex_unlock(&_mtx);
+    if (!allowed) return -L4_EACCESS;
+    if (acquire) {
+        if (_app_lock && _app_lock != _caller) return -L4_EBUSY;
+        _app_lock = _caller;
+    } else if (_app_lock == _caller) _app_lock = 0;
+    return 0;
 }

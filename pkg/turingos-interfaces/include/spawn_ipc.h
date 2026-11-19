@@ -14,6 +14,7 @@
 
 /* spawn() flags */
 enum {
+    SPAWN_NET = 1u << 4, SPAWN_DATA = 1u << 5, SPAWN_TMP = 1u << 6,
     SPAWN_BG   = 0,  /* background: return handle immediately */
     SPAWN_WAIT = 1,  /* foreground: spawn + wait, return exit code */
     SPAWN_ROM  = 2,  /* force ROM backend even for absolute paths */
@@ -115,6 +116,14 @@ struct Spawn_svr : L4::Kobject_t<Spawn_svr, L4::Kobject, 0x5901,
          L4::Ipc::Array<char const> path,
          L4::Ipc::Array<char const> args));
 
+    L4_INLINE_RPC(long, pipe_create, (l4_uint32_t &reader, l4_uint32_t &writer));
+    L4_INLINE_RPC(long, pipe_close, (l4_uint32_t end));
+    L4_INLINE_RPC(long, pipe_read, (l4_uint32_t end, l4_uint32_t limit, L4::Ipc::Array<char> &bytes));
+    L4_INLINE_RPC(long, pipe_write, (l4_uint32_t end, L4::Ipc::Array<char const> bytes));
+    L4_INLINE_RPC(long, spawn_io, (L4::Ipc::Array<char const> path, L4::Ipc::Array<char const> args,
+                                  l4_uint32_t flags, l4_uint32_t input, l4_uint32_t output,
+                                  L4::Ipc::Array<char const> cwd));
+    L4_INLINE_RPC(long, app_lock, (l4_uint32_t acquire));
     typedef L4::Typeid::Rpcs<spawn_t, wait_t, kill_t, task_count_t,
-                             task_stat_t, exec_t, spawn_con_t> Rpcs;
+                             task_stat_t, exec_t, spawn_con_t, pipe_create_t, pipe_close_t, pipe_read_t, pipe_write_t, spawn_io_t, app_lock_t> Rpcs;
 };

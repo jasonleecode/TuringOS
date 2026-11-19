@@ -1,2 +1,2 @@
 provides: lvgl-demo
-requires: lvgl-port
+requires: lvgl-port task_io

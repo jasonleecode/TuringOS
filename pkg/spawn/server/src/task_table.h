@@ -27,6 +27,9 @@ struct Child_task {
     enum State { FREE = 0, LOADING, RUNNING, EXITED } state;
     long exit_code;
     l4_uint32_t owner;
+    unsigned grants, delegation;
+    unsigned input, output;
+    char cwd[256];
     L4::Reply_cap waiter;
     using Console = L4Re::Util::Ref_cap<void>::Cap;
     Console console;

@@ -13,6 +13,7 @@
 #include <l4/re/env>
 #include <l4/re/namespace>
 #include <l4/re/util/cap_alloc>
+#include <l4/re/util/unique_cap>
 #include <l4/sys/factory>
 #include <l4/turingos/ext4_file_proto.h>
 #include <l4/rtc/rtc.h>
@@ -25,24 +26,43 @@
 #include "log.h"
 #include <l4/turingos/spawn_ipc.h>
 
+#ifdef SHELL_LOCAL_TOOLS
+int shell_tool_echo(int,char **);
+void cmd_echo(int argc,char **argv) { shell_tool_echo(argc,argv); }
+int shell_tool_info(int,char **);
+void cmd_info(int argc,char **argv) { shell_tool_info(argc,argv); }
+int shell_tool_clear(int,char **);
+void cmd_clear(int argc,char **argv) { shell_tool_clear(argc,argv); }
+int shell_tool_uname(int,char **);
+void cmd_uname(int argc,char **argv) { shell_tool_uname(argc,argv); }
+int shell_tool_cat(int,char **);
+void cmd_cat(int argc,char **argv) { shell_tool_cat(argc,argv); }
+#endif
+
 shell_cmd commands[] = {
     /* general */
     { "help",       "List available commands",              cmd_help       },
+#ifdef SHELL_LOCAL_TOOLS
     { "echo",       "Print arguments  [-n: no newline]",   cmd_echo       },
     { "info",       "Print system information",             cmd_info       },
     { "clear",      "Clear the screen",                    cmd_clear      },
+#endif
     { "history",    "Show command history",                 cmd_history    },
     { "exit",       "Exit the shell",                      cmd_exit       },
     /* filesystem */
     { "pwd",        "Print working directory",              cmd_pwd        },
     { "cd",         "Change directory  [dir]",              cmd_cd         },
     { "ls",         "List directory    [dir]",              cmd_ls         },
+#ifdef SHELL_LOCAL_TOOLS
     { "cat",        "Print file        <file>",             cmd_cat        },
+#endif
     { "mkdir",      "Create directory  <dir>",              cmd_mkdir      },
     { "rm",         "Remove file       <file>",             cmd_rm         },
     { "tmpfstest",  "Self-test the /tmp RAM filesystem",    cmd_tmpfstest  },
     /* system */
+#ifdef SHELL_LOCAL_TOOLS
     { "uname",      "Print OS/arch info",                  cmd_uname      },
+#endif
     { "env",        "Print environment variables",          cmd_env        },
     { "date",       "Print current date and time",          cmd_date       },
     { "uptime",     "Show system uptime",                   cmd_uptime     },
@@ -79,47 +99,13 @@ void cmd_help(int argc, char **argv)
     printf("Available commands:\n");
     for (int i = 0; i < num_commands; i++)
         printf("  %-10s  %s\n", commands[i].name, commands[i].help);
-}
-
-void cmd_echo(int argc, char **argv)
-{
-    int newline = 1;
-    int start   = 1;
-
-    if (argc > 1 && strcmp(argv[1], "-n") == 0) {
-        newline = 0;
-        start   = 2;
+    bool first = true;
+    while (char *name = next_rom_program("", first)) {
+        printf("%s %s", first ? "ROM programs:" : "", name);
+        free(name);
+        first = false;
     }
-    for (int i = start; i < argc; i++) {
-        if (i > start) putchar(' ');
-        printf("%s", argv[i]);
-    }
-    if (newline) putchar('\n');
-}
-
-void cmd_info(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-    printf("OS:           TuringOS\n");
-#if defined(__aarch64__)
-    printf("Architecture: aarch64\n");
-#elif defined(__x86_64__)
-    printf("Architecture: x86_64\n");
-#elif defined(__arm__)
-    printf("Architecture: arm (armv7)\n");
-#elif defined(__i386__)
-    printf("Architecture: i386\n");
-#else
-    printf("Architecture: unknown\n");
-#endif
-    printf("Runtime:      L4Re / Fiasco microkernel\n");
-}
-
-void cmd_clear(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-    printf("\033[2J\033[H");
-    fflush(stdout);
+    if (!first) putchar('\n');
 }
 
 void cmd_history(int argc, char **argv)
@@ -229,26 +215,6 @@ void cmd_ls(int argc, char **argv)
 
     for (int i = 0; i < n; i++) free(names[i]);
     free(names);
-}
-
-void cmd_cat(int argc, char **argv)
-{
-    if (argc < 2) {
-        printf("Usage: cat <file>\n");
-        return;
-    }
-    for (int i = 1; i < argc && !g_shell_interrupt; i++) {
-        FILE *f = fopen(argv[i], "r");
-        if (!f) {
-            printf("cat: %s: %s\n", argv[i], strerror(errno));
-            continue;
-        }
-        char buf[512];
-        size_t n;
-        while (!g_shell_interrupt && (n = fread(buf, 1, sizeof(buf), f)) > 0)
-            fwrite(buf, 1, n, stdout);
-        fclose(f);
-    }
 }
 
 // Convert a POSIX path (absolute or cwd-relative) to an absolute ext4 path.
@@ -398,24 +364,6 @@ void cmd_tmpfstest(int argc, char **argv)
 /* System commands                                                      */
 /* ------------------------------------------------------------------ */
 
-void cmd_uname(int argc, char **argv)
-{
-    (void)argc; (void)argv;
-    printf("TuringOS  Fiasco/L4Re  ");
-#if defined(__aarch64__)
-    printf("aarch64");
-#elif defined(__x86_64__)
-    printf("x86_64");
-#elif defined(__arm__)
-    printf("armv7");
-#elif defined(__i386__)
-    printf("i386");
-#else
-    printf("unknown");
-#endif
-    printf("\n");
-}
-
 void cmd_env(int argc, char **argv)
 {
     (void)argc; (void)argv;
@@ -513,28 +461,18 @@ void cmd_uptime(int argc, char **argv)
 
 /* Resolve a driver by name from the shared "dev" registry (driver-framework
  * Phase 2): drivers self-register their service gate, and we look them up by
- * name instead of ned hard-wiring a per-driver cap.  Cached per type so we
- * query the namespace only once. */
+ * name instead of ned hard-wiring a per-driver cap.  Resolve each operation so clients follow driver restarts. */
 template<typename T>
 static L4::Cap<T> dev_lookup(char const *name)
 {
-    static L4::Cap<T> cached;
-    if (cached.is_valid())
-        return cached;
-
+    static L4Re::Util::Unique_cap<T> cached;
     auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
     if (!dev.is_valid())
         return L4::Cap<T>::Invalid;
 
-    auto slot = L4Re::Util::cap_alloc.alloc<T>();
-    if (!slot.is_valid())
-        return L4::Cap<T>::Invalid;
-    if (dev->query(name, slot) < 0) {
-        L4Re::Util::cap_alloc.free(slot);
-        return L4::Cap<T>::Invalid;
-    }
-    cached = slot;
-    return cached;
+    if (!cached.is_valid()) cached = L4Re::Util::make_unique_cap<T>();
+    if (!cached.is_valid() || dev->query(name,cached.get(),0) < 0) return L4::Cap<T>::Invalid;
+    return cached.get();
 }
 
 /* Client of the ds18b20-server: resolve it via the "dev" registry, then call
@@ -846,7 +784,6 @@ static L4::Cap<Spawn_svr> spawnd_cap()
     return g_spawnd;
 }
 
-
 /* ------------------------------------------------------------------ */
 /* Program execution commands                                            */
 /* ------------------------------------------------------------------ */
@@ -894,10 +831,12 @@ void cmd_run(int argc, char **argv)
     size_t args_len = pack_argv(args_buf, sizeof(args_buf), &argv[1]);
 
     l4_uint32_t flags = background ? SPAWN_BG : SPAWN_WAIT;
-    long ret = spawnd->spawn(
+    char cwd[256];
+    if (!getcwd(cwd, sizeof(cwd))) { perror("run: cwd"); return; }
+    long ret = spawnd->spawn_io(
         L4::Ipc::Array<char const>(strlen(program) + 1, program),
-        L4::Ipc::Array<char const>(args_len, args_buf),
-        flags);
+        L4::Ipc::Array<char const>(args_len, args_buf), flags, 0, 0,
+        L4::Ipc::Array<char const>(strlen(cwd) + 1, cwd));
 
     if (ret < 0) {
         klog_err(KLOG_SHELL, "run: spawn failed (%ld)", ret);
@@ -944,10 +883,12 @@ bool shell_try_exec(int argc, char **argv)
     size_t args_len = pack_argv(args_buf, sizeof(args_buf), argv);
     l4_uint32_t flags = background ? SPAWN_BG : SPAWN_WAIT;
 
-    long ret = spawnd->spawn(
-        L4::Ipc::Array<char const>(strlen(argv[0]) + 1, argv[0]),
-        L4::Ipc::Array<char const>(args_len, args_buf),
-        flags);
+    char cwd[256];
+    if (!getcwd(cwd,sizeof(cwd))) { perror("shell: cwd"); return true; }
+    long ret = spawnd->spawn_io(
+        L4::Ipc::Array<char const>(strlen(argv[0])+1,argv[0]),
+        L4::Ipc::Array<char const>(args_len,args_buf),flags,0,0,
+        L4::Ipc::Array<char const>(strlen(cwd)+1,cwd));
 
     if (ret < 0) {
         printf("%s: failed to start (%ld)\n", argv[0], ret);

@@ -1,6 +1,6 @@
 PKGDIR ?= .
 L4DIR  ?= $(PKGDIR)/../..
 
-TARGET = server
+TARGET = io server
 
 include $(L4DIR)/mk/subdir.mk

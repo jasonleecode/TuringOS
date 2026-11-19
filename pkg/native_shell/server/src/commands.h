@@ -74,3 +74,7 @@ extern bool g_run_background;
 
 int kbd_try_pop();  /* non-blocking key read; -1 if empty */
 bool task_name_by_handle(l4_uint32_t handle, char *buf, int bufsz);
+
+bool shell_pipeline(int argc, char **argv, const bool *operators);
+
+char *next_rom_program(const char *prefix, bool first);

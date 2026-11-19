@@ -1,8 +1,8 @@
 PKGDIR	?= .
 L4DIR	?= $(PKGDIR)/../..
 
-TARGET = lib example
+TARGET = lib example runner
 
 include $(L4DIR)/mk/subdir.mk
 
-example: lib
+example runner: lib

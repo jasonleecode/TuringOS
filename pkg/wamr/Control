@@ -1,2 +1,2 @@
-requires: stdlibs libc l4re
+requires: stdlibs libc l4re ext4_client task_io libstdc++
 provides: wamr

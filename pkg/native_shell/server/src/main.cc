@@ -1,4 +1,6 @@
 #include <cerrno>
+#include <dirent.h>
+#include <l4/util/elf.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,7 +31,7 @@ volatile sig_atomic_t g_shell_interrupt = 0;
 static volatile bool  g_cmd_running     = false;
 bool                  g_run_background  = false;
 
-/* ---- Keyboard ring buffer (replaces pipe — pipe() not in L4Re) ---- */
+/* ---- Keyboard ring buffer shared with the console reader ---- */
 static char            g_kbd_buf[256];
 static unsigned        g_kbd_head = 0; /* write index */
 static unsigned        g_kbd_tail = 0; /* read  index */
@@ -187,9 +189,10 @@ static bool do_login(bool local_echo)
 }
 
 /* ---- Parse line into argv ---- */
-static int parse_line(char *line, char **argv, int max_args)
+static int parse_line(char *line, char **argv, bool *operators, int max_args)
 {
-    static char buf[MAX_LINE];
+    static char buf[MAX_LINE + 128];
+    if (strlen(line) >= MAX_LINE) { puts("shell: line too long"); return 0; }
     char *out = buf;
     char *p   = line;
     int   argc = 0;
@@ -198,9 +201,17 @@ static int parse_line(char *line, char **argv, int max_args)
         while (*p == ' ' || *p == '\t') p++;
         if (!*p) break;
 
+        operators[argc] = strchr("|&<>",*p) != nullptr;
         argv[argc++] = out;
+        if (operators[argc-1]) {
+            char op=*p++;
+            *out++=op;
+            if (op=='>' && *p=='>') *out++=*p++;
+            *out++=0;
+            continue;
+        }
 
-        while (*p && *p != ' ' && *p != '\t') {
+        while (*p && *p != ' ' && *p != '\t' && !strchr("|&<>",*p)) {
             if (*p == '\'') {
                 for (++p; *p && *p != '\''; ) *out++ = *p++;
                 if (*p) p++;
@@ -219,20 +230,52 @@ static int parse_line(char *line, char **argv, int max_args)
         }
         *out++ = '\0';
     }
+    if (*p) { puts("shell: too many arguments"); return 0; }
     argv[argc] = nullptr;
     return argc;
 }
 
+// Enumerate the binaries in this image for both help and readline completion.
+char *next_rom_program(const char *prefix, bool first)
+{
+    static DIR *dir;
+    if (first) {
+        if (dir) closedir(dir);
+        dir = L4Re::Env::env()->get_cap<void>("spawnd").is_valid() ? opendir("/rom") : nullptr;
+    }
+    if (!dir) return nullptr;
+    size_t length = strlen(prefix);
+    while (auto entry = readdir(dir)) {
+        const char *name = entry->d_name;
+        if (name[0] == '.' || strncmp(name, prefix, length)) continue;
+        char path[280];
+        if (snprintf(path, sizeof(path), "/rom/%s", name) >= (int)sizeof(path)) continue;
+        FILE *f = fopen(path, "rb");
+        if (!f) continue;
+        ElfW(Ehdr) header{};
+        bool executable = fread(&header, 1, sizeof(header), f) == sizeof(header)
+                          && l4util_elf_check_magic(&header) && l4util_elf_check_arch(&header) && header.e_entry
+                          && (header.e_type == ET_EXEC || header.e_type == ET_DYN);
+        fclose(f);
+        if (executable) return strdup(name);
+    }
+    closedir(dir);
+    dir = nullptr;
+    return nullptr;
+}
+
 static char *command_generator(const char *text, int state)
 {
-    static int idx, len;
-    if (!state) { idx = 0; len = static_cast<int>(strlen(text)); }
+    static int idx;
+    static bool first_rom;
+    if (!state) { idx = 0; first_rom = true; }
     while (idx < num_commands) {
         const char *name = commands[idx++].name;
-        if (strncmp(name, text, len) == 0)
-            return strdup(name);
+        if (strncmp(name, text, strlen(text)) == 0) return strdup(name);
     }
-    return nullptr;
+    char *name = next_rom_program(text, first_rom);
+    first_rom = false;
+    return name;
 }
 
 static char **shell_completion(const char *text, int start, int end)
@@ -336,6 +379,7 @@ int main(int argc, char const* const* argv)
     char  *line = nullptr;
     char  *cmd_argv[MAX_ARGS];
     int    cmd_argc;
+    bool operators[MAX_ARGS];
 
     for (;;) {
         g_shell_interrupt  = 0;
@@ -364,24 +408,28 @@ int main(int argc, char const* const* argv)
         if (*line)
             add_history(line);
 
-        cmd_argc = parse_line(line, cmd_argv, MAX_ARGS);
+        cmd_argc = parse_line(line, cmd_argv, operators, MAX_ARGS);
         if (cmd_argc == 0) {
             free(line); line = nullptr;
             continue;
         }
 
-        // Detect '&' (background) and '>' / '>>' (redirection), strip from argv
+        g_cmd_running = true;
+        if (shell_pipeline(cmd_argc,cmd_argv,operators)) {
+            g_cmd_running = false; free(line); line=nullptr; continue;
+        }
+        // Detect '&'  (background) and '>' / '>>' (redirection), strip from argv
         const char *redir_path = nullptr;
         bool redir_append = false;
         bool background = false;
         int new_argc = 0;
         for (int i = 0; i < cmd_argc; i++) {
-            if ((strcmp(cmd_argv[i], ">") == 0 || strcmp(cmd_argv[i], ">>") == 0)
+            if (operators[i] && (strcmp(cmd_argv[i], ">") == 0 || strcmp(cmd_argv[i], ">>") == 0)
                 && i + 1 < cmd_argc) {
                 redir_path   = cmd_argv[i + 1];
                 redir_append = (cmd_argv[i][1] == '>');   // ">>" => append
                 i++;
-            } else if (strcmp(cmd_argv[i], "&") == 0) {
+            } else if (operators[i] && strcmp(cmd_argv[i], "&") == 0) {
                 background = true;
             } else {
                 cmd_argv[new_argc++] = cmd_argv[i];
@@ -389,6 +437,13 @@ int main(int argc, char const* const* argv)
         }
         cmd_argv[new_argc] = nullptr;
         cmd_argc = new_argc;
+        if (!cmd_argc) {
+            puts("shell: missing command");
+            g_cmd_running = false;
+            free(line);
+            line = nullptr;
+            continue;
+        }
         g_run_background = background;
 
         // Set up redirection: open file, save old stdout fd, dup2
@@ -396,15 +451,18 @@ int main(int argc, char const* const* argv)
         int redir_fd     = -1;
         if (redir_path) {
             fflush(stdout);
-            saved_stdout = dup(STDOUT_FILENO);
             int oflags = O_WRONLY | O_CREAT
                        | (redir_append ? O_APPEND : O_TRUNC);
             redir_fd = open(redir_path, oflags, 0644);
-            if (redir_fd < 0) {
-                printf("shell: cannot open '%s' for writing\n", redir_path);
-                redir_path = nullptr;
-            } else {
-                dup2(redir_fd, STDOUT_FILENO);
+            if (redir_fd >= 0) saved_stdout = dup(STDOUT_FILENO);
+            if (redir_fd < 0 || saved_stdout < 0 || dup2(redir_fd, STDOUT_FILENO) < 0) {
+                perror(redir_path);
+                if (redir_fd >= 0) close(redir_fd);
+                if (saved_stdout >= 0) close(saved_stdout);
+                g_cmd_running = false;
+                free(line);
+                line = nullptr;
+                continue;
             }
         }
 

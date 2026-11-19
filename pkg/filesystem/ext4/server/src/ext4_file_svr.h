@@ -31,6 +31,7 @@ public:
   Ext4_file_svr(L4Re::Util::Object_registry *registry, const char *path);
 
   ~Ext4_file_svr();
+  int open_file(unsigned flags);
 
   l4_ret_t op_setup(Ext4_file_ops::Rights,
                     L4::Ipc::Snd_fpage &snd_buf,

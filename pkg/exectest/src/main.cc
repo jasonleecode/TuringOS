@@ -15,9 +15,24 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <initializer_list>
 
-int main(int /*argc*/, char ** /*argv*/)
+int main(int argc, char **argv)
 {
+    if (argc > 1 && !strcmp(argv[1], "--caps")) {
+        auto env = L4Re::Env::env();
+        for (auto name : {"netd", "data", "ext4", "tmp", "authd"})
+            printf("%s=%d ",name,env->get_cap<void>(name).is_valid());
+        puts("");
+        if (argc == 3) {
+            FILE *f = fopen(argv[2],"wb");
+            if (!f) return 1;
+            bool ok = fputs("application data\n",f) >= 0;
+            return fclose(f) || !ok;
+        }
+        return 0;
+    }
     const char *h_str  = getenv("SPAWND_HANDLE");
     unsigned    handle = h_str ? (unsigned)atoi(h_str) : 0;
 

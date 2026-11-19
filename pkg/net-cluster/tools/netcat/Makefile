@@ -3,10 +3,11 @@ L4DIR        ?= $(PKGDIR)/../..
 
 TARGET        = netcat
 SRC_CC        = main.cc
-REQUIRES_LIBS = l4re-util libstdc++
+REQUIRES_LIBS = l4re-util libstdc++ task_io
 
 # netd Net_svr protocol header.  netcat is a pure socket-over-IPC client: it
 # links NO lwIP and holds NO sigma0 — the network lives entirely in netd,
 # reached through the forwarded "netd" cap.
 
+LDFLAGS += -u socket -u task_io_init
 include $(L4DIR)/mk/prog.mk

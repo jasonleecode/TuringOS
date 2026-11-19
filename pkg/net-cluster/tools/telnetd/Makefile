@@ -9,4 +9,6 @@ REQUIRES_LIBS = l4re-util libstdc++ l4util
 # no sigma0: it accepts a TCP connection via netd, presents it as an L4::Vcon,
 # and asks spawnd (spawn_con) to launch native_shell with that vcon as console.
 
+REQUIRES_LIBS += task_io
+LDFLAGS += -u task_io_init
 include $(L4DIR)/mk/prog.mk

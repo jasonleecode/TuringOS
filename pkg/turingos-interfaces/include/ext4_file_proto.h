@@ -92,5 +92,8 @@ struct Ext4_dir_ops
   L4_INLINE_RPC(long, ext_unlink,
     (L4::Ipc::Array<char const, unsigned long> path));
 
-  typedef L4::Typeid::Rpcs<ext_mkdir_t, ext_unlink_t> Rpcs;
+  L4_INLINE_RPC(long, ext_open, (L4::Ipc::Small_buf receive, L4::Ipc::Array<char const, unsigned long> path,
+                                unsigned flags, unsigned &directory, L4::Ipc::Snd_fpage &object));
+  L4_INLINE_RPC(long, ext_remove, (L4::Ipc::Array<char const, unsigned long> path, unsigned directory));
+  typedef L4::Typeid::Rpcs<ext_mkdir_t, ext_unlink_t, ext_open_t, ext_remove_t> Rpcs;
 };

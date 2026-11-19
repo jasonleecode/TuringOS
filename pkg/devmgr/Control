@@ -1,2 +1,2 @@
 provides: devmgr
-requires: stdlibs l4util libstdc++
+requires: stdlibs l4util libstdc++ libpthread l4re-util turingos-interfaces

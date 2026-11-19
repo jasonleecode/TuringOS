@@ -108,7 +108,7 @@ int main()
     }
 
   auto dev = L4Re::Env::env()->get_cap<L4Re::Namespace>("dev");
-  if (dev.is_valid() && dev->register_obj("temp0", gate) >= 0)
+  if (dev.is_valid() && dev->register_obj("temp0", gate, L4Re::Namespace::Rw | L4Re::Namespace::Overwrite) >= 0)
     printf("[ds18b20-server] registered as dev/temp0 (%s)\n",
            sensor ? "real sensor" : "simulated");
   else

@@ -9,6 +9,7 @@
 
 #include "task_table.h"
 #include "app_model.h"
+#include "pipes.h"
 
 class Spawnd : public L4::Epiface_t<Spawnd, Spawn_svr>
 {
@@ -48,7 +49,19 @@ public:
                      L4::Ipc::Array_ref<char const> path,
                      L4::Ipc::Array_ref<char const> args);
 
+    long op_pipe_create(Spawn_svr::Rights, unsigned &r, unsigned &w) { return _pipes.create(_caller,r,w); }
+    long op_pipe_close(Spawn_svr::Rights, unsigned id);
+    long op_pipe_write(Spawn_svr::Rights, unsigned id, L4::Ipc::Array_ref<char const> bytes)
+    { return _pipes.write(_caller,id,bytes.data,bytes.length); }
+    long op_pipe_read(Spawn_svr::Rights, unsigned id, unsigned limit, L4::Ipc::Array_ref<char> &bytes);
+    long op_spawn_io(Spawn_svr::Rights, L4::Ipc::Array_ref<char const> path,
+                     L4::Ipc::Array_ref<char const> args, unsigned flags, unsigned input,
+                     unsigned output, L4::Ipc::Array_ref<char const> cwd);
+    long op_app_lock(Spawn_svr::Rights, unsigned acquire);
 private:
+    Pipes _pipes;
+    unsigned _app_lock = 0;
+    char _read_buf[128];
     struct Child_endpoint : L4::Epiface_t0<Spawn_svr> {
         Spawnd *service;
         l4_uint32_t handle;
@@ -80,7 +93,8 @@ private:
      */
     Child_task *do_spawn(const char *path_str,
                          char *const *argv,
-                         Child_task::Console console = {});
+                         unsigned flags, Child_task::Console console = {}, unsigned input = ~0u,
+                         unsigned output = ~0u, const char *cwd = nullptr);
 
     /*
      * Load `path_str` as a fresh L4 task and bind its parent gate to the reaper
@@ -89,10 +103,10 @@ private:
      * false (nothing to clean up — the loader unwinds its own allocations).
      * Shared by do_spawn (new slot) and op_exec (replace existing slot).
      */
-    bool load_image(l4_uint32_t h, const char *path_str, char *const *argv,
+    bool load_image(Child_task const *slot, const char *path_str, char *const *argv,
                     l4_cap_idx_t *task, l4_cap_idx_t *thread,
                     l4_cap_idx_t *rm, l4_cap_idx_t *gate,
-                    l4_cap_idx_t console, l4_cap_idx_t service_gate);
+                    l4_cap_idx_t console, l4_cap_idx_t service_gate, unsigned grants);
 
     // Caller holds _mtx. The reply cap is completed by finish_waiters().
     long wait_locked(Child_task *task, bool nonblocking);

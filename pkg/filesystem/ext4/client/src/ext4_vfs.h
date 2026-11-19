@@ -24,8 +24,10 @@ class Ext4_file_vfs : public L4Re::Vfs::Be_file_pos
 {
 public:
   explicit Ext4_file_vfs(L4::Cap<Ext4_file_ops> cap) noexcept;
+  explicit Ext4_file_vfs(L4Re::Util::Unique_cap<Ext4_file_ops> &slot) noexcept;
   ~Ext4_file_vfs() noexcept;
 
+  bool valid() const { return _valid; }
   // Be_file_pos interface
   off64_t size() const noexcept override { return (off64_t)_size; }
   ssize_t preadv(const struct iovec *iov, int cnt, off64_t offset) noexcept override;
@@ -41,7 +43,8 @@ public:
   int     set_status_flags(long flags) noexcept override;
 
 private:
-  L4::Cap<Ext4_file_ops>      _cap;
+  L4::Cap<Ext4_file_ops> _cap;
+  L4Re::Util::Unique_cap<Ext4_file_ops> _slot;
   L4Re::Util::Unique_cap<L4Re::Dataspace> _buf;  // shared bounce buffer
   l4_addr_t    _buf_addr = 0;
   l4_uint32_t  _buf_size = 0;     // usable bounce-buffer capacity

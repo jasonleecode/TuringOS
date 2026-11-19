@@ -245,7 +245,7 @@ module hello
 
 entry native-shell
 # board virt
-# build-packages native_shell net-cluster netd authd syslogd spawn devmgr ds18b20 tef6686hn virtio-block-driver filesystem/ext4 io/io rtc fb-drv lvgl/demo lvgl/desktop hello benchmark/cyclictest benchmark/ipcbench benchmark/smp-spawn exectest
+# build-packages native_shell wamr net-cluster netd authd syslogd spawn devmgr ds18b20 tef6686hn virtio-block-driver filesystem/ext4 io/io rtc fb-drv lvgl/demo lvgl/desktop hello benchmark/cyclictest benchmark/ipcbench benchmark/smp-spawn exectest
 roottask moe rom/native-shell.cfg
 module l4re
 module ned
@@ -274,6 +274,14 @@ module tef6686hn-server
 module fb-drv
 module lvgl-demo
 module lvgl-desktop
+module echo
+module cat
+module info
+module clear
+module uname
+module svc
+module app
+module wasm-run
 module native_shell
 module libreadline.so
 module hello
