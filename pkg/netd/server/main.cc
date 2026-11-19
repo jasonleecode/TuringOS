@@ -65,7 +65,7 @@
 #include <pthread.h>
 #include <pthread-l4.h>
 
-#include <net_ipc.h>
+#include <l4/turingos/net_ipc.h>
 
 /* ------------------------------------------------------------------ */
 /* Virtio-MMIO register offsets                                        */

@@ -9,8 +9,6 @@ SRC_CC        = main.cc
 # Registry_server framework.
 REQUIRES_LIBS = lwip libc_be_socket_lwip libio-vbus l4re-util l4util libstdc++
 
-# The Net_svr protocol header (net_ipc.h) lives in this package's include dir.
-PRIVATE_INCDIR += $(SRC_DIR)/../include
 
 include $(L4DIR)/mk/prog.mk
 

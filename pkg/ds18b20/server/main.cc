@@ -25,7 +25,7 @@
 #include <l4/vbus/vbus_gpio>
 
 #include <l4/ds18b20/ds18b20.h>
-#include <l4/ds18b20/temp_proto.h>
+#include <l4/turingos/temp_proto.h>
 
 namespace {
 

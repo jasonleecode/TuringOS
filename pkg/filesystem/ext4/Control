@@ -1,2 +1,2 @@
 provides: liblwext4 ext4fs ext4_client
-requires: libc stdlibs libio-vbus cxx_libc_io cxx_io libstdc++ l4util libsigma0 l4virtio libgcc libgcc_eh
+requires: libc stdlibs libio-vbus cxx_libc_io cxx_io libstdc++ l4util libsigma0 l4virtio libgcc libgcc_eh turingos-interfaces

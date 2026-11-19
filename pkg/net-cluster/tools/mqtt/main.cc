@@ -24,7 +24,7 @@
 #include <l4/util/util.h>
 #include <l4/sys/kip.h>
 
-#include <net_ipc.h>
+#include <l4/turingos/net_ipc.h>
 
 namespace {
 

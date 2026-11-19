@@ -34,8 +34,8 @@
 #include <l4/sys/vcon>
 #include <l4/util/util.h>
 
-#include <net_ipc.h>
-#include <spawn_ipc.h>
+#include <l4/turingos/net_ipc.h>
+#include <l4/turingos/spawn_ipc.h>
 
 namespace {
 

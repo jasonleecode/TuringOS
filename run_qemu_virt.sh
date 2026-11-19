@@ -12,7 +12,7 @@ NET_MODE="shell" # 默认启用网络
 HOST_PORT=5555   # 主机侧端口，转发到 guest:5000
 GPU_MODE="ramfb" # GPU 模式：启用 ramfb + 显示输出
 VNC_PORT=5900    # VNC 端口（--gpu --vnc 时使用）
-CFG_NAME="native-shell" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
+CFG_NAME="" # 指定配置名称 (--cfg <name> → bootstrap_<name>.elf)
 GPU_DISPLAY="gtk" # 显示后端：gtk（默认）/ vnc
 FB_RES="800x600"  # 帧缓冲分辨率
 SMP_CPUS=2       # 默认双核
@@ -46,6 +46,7 @@ while [[ $# -gt 0 ]]; do
             fi
             shift
             ;;
+        --headless) GPU_DISPLAY="none"; shift ;;
         --gtk)
             GPU_DISPLAY="gtk"
             shift
@@ -84,8 +85,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --cfg NAME            指定配置 (加载 bootstrap_NAME.elf)
                         常用配置:
                           native-shell      原生 Shell (默认)
-                          virt-blk          VirtIO 块设备测试 (需 --disk)
-                          virt-blk-shell    ext4 + native_shell (需 --disk)
+                          lvgl-demo         图形演示
                           uart-test         virtio-serial Vcon 服务器 + 客户端 (需 --uart)
                           cyclictest        调度延迟基准测试
   --no-net              禁用网络"
@@ -93,8 +93,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --host-port PORT      主机转发端口 (默认 5555)"
             echo "  --gpu                 启用 GPU 调试 (ramfb + GTK 窗口，默认)"
             echo "  --vnc [PORT]          VNC 显示，可选端口 (默认 5900)"
+            echo "  --headless            保留 ramfb 和输入设备，仅通过串口交互"
             echo "  --gtk                 GTK 窗口显示 (需要本地桌面环境)"
-            echo "  --fb-res WxH          帧缓冲分辨率 (默认 1280x720)"
+            echo "  --fb-res WxH          帧缓冲分辨率 (默认 800x600)"
             echo "  --smp N               CPU 核心数 (默认 2，Fiasco 最多 16)"
             echo "  --no-smp              单核模式"
             echo "  --disk SIZE           虚拟磁盘大小 (默认 100M，如 512M, 1G)"
@@ -103,9 +104,7 @@ while [[ $# -gt 0 ]]; do
             echo "示例:"
             echo "  $0                                        # native-shell 带网络启动 (默认)"
             echo "  $0 --no-net                               # 不带网络启动"
-            echo "  $0 --cfg virt-blk-shell --disk 100M      # ext4 文件系统 + native_shell"
-            echo "  $0 --cfg virt-blk --disk 100M            # 仅 VirtIO 块设备测试
-  $0 --cfg uart-test --uart                # virtio-serial Vcon 服务器 + 客户端"
+            echo "  $0 --cfg uart-test --uart                # virtio-serial Vcon 服务器 + 客户端"
             echo "  $0 --host-port 8080                      # 自定义转发端口"
             echo "  $0 --disk 512M                           # 512MB 虚拟磁盘"
             echo "  $0 --no-disk                             # 禁用虚拟磁盘"
@@ -122,7 +121,7 @@ while [[ $# -gt 0 ]]; do
             echo "    $0 --gpu  (另一终端连接 VNC: vncviewer localhost:5900)"
             echo ""
             echo "TCP server 测试:"
-            echo "  1. 先构建: make -C build/l4re_virt PKGS=native_shell"
+            echo "  1. 先构建: ./build.sh --board virt --pkg native_shell"
             echo "  2. 启动:   $0 --net-shell"
             echo "  3. 在 shell 中输入: net"
             echo "  4. 在另一终端: python3 tools/tcp_client.py --port $HOST_PORT"
@@ -135,55 +134,25 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# ---- 查找镜像 ----
-if [ -n "$CFG_NAME" ]; then
-    BUILDS=("$PROJ_ROOT/build/l4re_virt/images/bootstrap_${CFG_NAME}.elf")
-else
-    BUILDS=(
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap_native-shell.elf"
-        "$PROJ_ROOT/build/l4re_virt/images/bootstrap.elf"
-        "$PROJ_ROOT/build/artifacts/bootstrap-image-virt.elf"
-    )
+out="${BUILD_OUT:-$PROJ_ROOT/build}"
+if [[ -z $CFG_NAME ]]; then
+    CFG_NAME=native-shell
+    if grep -qs '^# CONFIG_PKG_NATIVE_SHELL is not set$' "$out/l4re_virt/.kconfig"; then CFG_NAME=minimal; fi
 fi
-
-IMAGE=""
-for img in "${BUILDS[@]}"; do
-    if [ -f "$img" ]; then
-        IMAGE="$img"
-        echo "找到镜像: $IMAGE"
-        break
-    fi
-done
-
-if [ -z "$IMAGE" ]; then
-    echo "错误: 找不到引导镜像"
-    echo ""
-    echo "请先运行构建:"
-    echo "  ./build.sh --board virt bootstrap"
+IMAGE="$out/artifacts/virt/$CFG_NAME/bootstrap.elf"
+if [[ ! -f $IMAGE ]]; then IMAGE="$out/l4re_virt/images/bootstrap_${CFG_NAME}.elf"; fi
+if [[ ! -s $IMAGE ]]; then
+    echo "请先运行 ENTRY=$CFG_NAME ./build.sh --board virt all" >&2
     exit 1
 fi
+echo "找到镜像: $IMAGE"
 
-# ---- 检测镜像架构 ----
-MACHINE_TYPE=""
-if echo "$IMAGE" | grep -q "l4re_arm64\|rpi4"; then
-    MACHINE_TYPE="aarch64"
-    QEMU_ARCH="qemu-system-aarch64"
-    CPU="-cpu cortex-a57"
-    MEM="-m 1024M"
-    MACHINE="-M virt,virtualization=true"
-elif echo "$IMAGE" | grep -q "l4re_virt"; then
-    MACHINE_TYPE="arm"
-    QEMU_ARCH="qemu-system-arm"
-    CPU="-cpu cortex-a15"
-    MEM="-m 48M"
-    MACHINE="-M virt"
-else
-    MACHINE_TYPE="aarch64"
-    QEMU_ARCH="qemu-system-aarch64"
-    CPU="-cpu cortex-a57"
-    MEM="-m 1024M"
-    MACHINE="-M virt,virtualization=true"
-fi
+# The virt board profile builds ARMv7 Cortex-A15 images.
+MACHINE_TYPE="arm"
+QEMU_ARCH="qemu-system-arm"
+CPU="-cpu cortex-a15"
+MEM="-m 48M"
+MACHINE="-M virt"
 
 # ---- 网络参数 ----
 NET_ARGS=""
@@ -227,6 +196,7 @@ if [ -n "$GPU_MODE" ]; then
             echo "  连接命令: vncviewer localhost:${VNC_PORT}"
             echo "           或 vncviewer localhost::${VNC_PORT}"
             ;;
+        none) DISPLAY_ARGS="-display none" ;;
         gtk)
             DISPLAY_ARGS="-display gtk"
             echo ""
@@ -249,7 +219,7 @@ fi
 
 # ---- 磁盘参数 ----
 DISK_ARGS=""
-DISK_IMAGE="$PROJ_ROOT/build/virt_disk.img"
+DISK_IMAGE="$out/virt_disk.img"
 
 if [ -n "$DISK_SIZE" ]; then
     # 创建虚拟磁盘（如果不存在），并用 mkfs.ext4 预格式化

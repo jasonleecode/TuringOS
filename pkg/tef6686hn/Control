@@ -1,2 +1,2 @@
-requires: stdlibs libstdc++ i2c-server
+requires: stdlibs libstdc++ i2c-server turingos-interfaces
 provides: tef6686hn

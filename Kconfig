@@ -1,52 +1,4 @@
-# TuringOS Driver Configuration
-#
-# This is the top-level Kconfig for the TuringOS driver menuconfig system.
-# It sources all driver package Kconfig.L4 files and provides simple
-# enable/disable switches for packages without their own Kconfig.L4.
-
-mainmenu "TuringOS Driver Configuration"
-
-# ---- Packages with existing Kconfig.L4 ----
-
-comment "--- Core Components ---"
-
-source "pkg/bootstrap/Kconfig.turingos"
-
-source "pkg/cons/Kconfig.L4"
-
-source "pkg/drivers-frst/Kconfig.L4"
-
-source "pkg/tinit/Kconfig.L4"
-
-comment "--- Storage Drivers ---"
-
-source "pkg/emmc-driver/Kconfig.L4"
-
-comment "--- Bus & Peripheral Drivers ---"
-
-source "pkg/i2c-driver/Kconfig.L4"
-
-source "pkg/spi-driver/Kconfig.L4"
-
-source "pkg/io/Kconfig.turingos"
-
-source "pkg/rtc/Kconfig.L4"
-
-comment "--- Device Drivers ---"
-
-source "pkg/ssd1306/Kconfig.L4"
-
-comment "--- Virtualization ---"
-
-source "pkg/uvmm/Kconfig.L4"
-
-source "pkg/tvmm/Kconfig.L4"
-
-source "pkg/virtio-net-switch/Kconfig.L4"
-
-comment "--- Packages without detailed Kconfig ---"
-
-menu "Additional driver packages"
+menu "TuringOS product packages"
 
 config PKG_ACPICA
 	bool "acpica - ACPI Component Architecture"
@@ -71,7 +23,7 @@ config PKG_ATKINS
 
 config PKG_BCM2835_MBOX_DRIVER
 	bool "bcm2835-mbox-driver - Raspberry Pi mailbox driver"
-	default y
+	default y if PLATFORM_TYPE_rpi
 	help
 	  Mailbox driver for Raspberry Pi (BCM2835/BCM2711).
 	  Required by emmc-driver for RPi SD card support.

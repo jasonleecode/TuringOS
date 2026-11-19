@@ -15,27 +15,19 @@
 set -e
 
 PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
-CFG_NAME="imx6ul-native-shell"
+out="${BUILD_OUT:-$PROJ_ROOT/build}"
+CFG_NAME=imx6ul-native-shell
+if grep -qs '^# CONFIG_PKG_NATIVE_SHELL is not set$' "$out/l4re_imx6ul/.kconfig"; then CFG_NAME=minimal; fi
 TIMEOUT=0
 
+check=0
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --cfg)
             CFG_NAME="$2"; shift 2 ;;
         --timeout)
             TIMEOUT="$2"; shift 2 ;;
-        --check)
-            # 仅验证镜像结构，不启动 QEMU
-            IMAGE="$PROJ_ROOT/build/l4re_imx6ul/images/bootstrap_${CFG_NAME}.elf"
-            if [ -f "$IMAGE" ]; then
-                echo "镜像验证通过: $IMAGE"
-                file "$IMAGE"
-                exit 0
-            else
-                echo "错误: 镜像不存在: $IMAGE"
-                exit 1
-            fi
-            ;;
+        --check) check=1; shift ;;
         --help|-h)
             echo "用法: $0 [选项]"
             echo ""
@@ -53,7 +45,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-IMAGE="$PROJ_ROOT/build/l4re_imx6ul/images/bootstrap_${CFG_NAME}.elf"
+IMAGE="$out/artifacts/imx6ul/$CFG_NAME/bootstrap.elf"
+if [[ ! -f $IMAGE ]]; then IMAGE="$out/l4re_imx6ul/images/bootstrap_${CFG_NAME}.elf"; fi
 
 if [ ! -f "$IMAGE" ]; then
     echo "错误: 找不到镜像: $IMAGE"
@@ -62,6 +55,8 @@ if [ ! -f "$IMAGE" ]; then
     echo "  ./build.sh --board imx6ul all"
     exit 1
 fi
+
+if (( check )); then file "$IMAGE"; exit; fi
 
 echo "=========================================="
 echo "  TuringOS QEMU 测试 - i.MX6UL"

@@ -11,8 +11,7 @@ REQUIRES_LIBS = l4re-util libstdc++ mbedtls ext4_client
 
 # Auth_svr protocol header + vendored mbedTLS headers/config (same incantation
 # as net-cluster: the .pc doesn't propagate the header path or the config file).
-PRIVATE_INCDIR += $(SRC_DIR)/../include \
-                  $(SRC_DIR)/../../mbedtls/lib/contrib/include \
+PRIVATE_INCDIR += $(SRC_DIR)/../../mbedtls/lib/contrib/include \
                   $(SRC_DIR)/../../mbedtls/lib
 DEFINES        += -DMBEDTLS_CONFIG_FILE='<mbedtls_l4_config.h>'
 

@@ -27,11 +27,11 @@
 
 #include <mbedtls/sha256.h>
 
-#include <auth_ipc.h>
+#include <l4/turingos/auth_ipc.h>
 
 namespace {
 
-#define SHADOW_PATH "/ext4/etc/shadow"
+const char *shadow_path = "/ext4/etc/shadow";
 
 struct Cred
 {
@@ -149,11 +149,11 @@ void install_development_account()
 
 void load_credentials()
 {
-  FILE *f = fopen(SHADOW_PATH, "r");
+  FILE *f = fopen(shadow_path, "r");
   retry_store_open = !f;
   if (!f)
     {
-      printf("[authd] cannot open " SHADOW_PATH " (errno=%d)\n", errno);
+      printf("[authd] cannot open %s (errno=%d)\n", shadow_path, errno);
       return;
     }
 
@@ -170,10 +170,10 @@ void load_credentials()
 
   if (n == 0)
     {
-      printf("[authd] " SHADOW_PATH " has no usable entries\n");
+      printf("[authd] %s has no usable entries\n", shadow_path);
       return;
     }
-  printf("[authd] loaded %d credential(s) from " SHADOW_PATH "\n", n);
+  printf("[authd] loaded %d credential(s) from %s\n", n, shadow_path);
 }
 
 // ---- server ---------------------------------------------------------------
@@ -218,8 +218,11 @@ int main(int argc, char **argv)
   if (argc == 2 && strcmp(argv[1], "--diskless-development") == 0
       && !L4Re::Env::env()->get_cap<void>("ext4").is_valid())
     install_development_account();
-  else
+  else {
+    if (argc == 2 && strcmp(argv[1], "--rom-credentials") == 0)
+      shadow_path = "/rom/board-shadow";
     load_credentials();
+  }
 
   static Auth_impl impl;
   if (!server.registry()->register_obj(&impl, "svr").is_valid())

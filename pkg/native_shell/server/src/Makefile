@@ -14,12 +14,6 @@ REQUIRES_LIBS	= readline rtc rtc_libc_be \
 		  libio-vbus libstdc++ l4util \
 		  devfs libloader ext4_client libklog tmpfs procfs
 
-PRIVATE_INCDIR  += $(SRC_DIR)/../../../spawn/include \
-                   $(SRC_DIR)/../../../filesystem/ext4/include \
-                   $(SRC_DIR)/../../../ds18b20/include \
-                   $(SRC_DIR)/../../../tef6686hn/include \
-                   $(SRC_DIR)/../../../authd/include
-
 # Force linker to pull in the client TUs that self-register with the VFS:
 # ext4_client registers its File_factory; tmpfs mounts /tmp; procfs mounts
 # /proc and /sys.

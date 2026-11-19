@@ -1,5 +1,5 @@
 PKGDIR ?= ..
 L4DIR ?= $(PKGDIR)/../..
 
-TARGET = server
+TARGET = src
 include $(L4DIR)/mk/subdir.mk

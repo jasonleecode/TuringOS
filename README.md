@@ -11,7 +11,7 @@
 turingos/
 ├── kernel/          # Fiasco 微内核源码 (Git 子模块)
 ├── l4re/            # L4Re 运行时环境 (Git 子模块)
-├── l4mk/            # L4Re 构建系统入口 (启动项 conf/modules.list 在此)
+├── l4mk/            # L4Re 构建工具
 ├── pkg/             # 驱动、服务与应用（扁平结构，约 50+ 个包）
 │   ├── native_shell/      #   交互式 Shell
 │   ├── spawn/             #   spawnd 进程加载服务
@@ -20,12 +20,12 @@ turingos/
 │   ├── fb-drv/ lvgl/      #   显示子系统
 │   ├── benchmark/         #   cyclictest / ipcbench / smp-spawn-bench
 │   └── ...                #   传感器、CAN、WebAssembly(wamr) 等
-├── conf/            # 启动配置 (*.cfg)
+├── conf/            # 板级配置 boards/、启动清单 modules.list、Ned 和设备配置
 ├── docs/            # 设计文档与 todo
 ├── tools/           # 测试与 CI 脚本 (ci_smp_smoke.sh 等)
 ├── build.sh         # 构建脚本 (--board rpi4|bbb|virt|imx6ul)
 ├── run_qemu*.sh     # QEMU 启动脚本 (virt / rpi4 / imx6ul)
-├── Kconfig          # 驱动配置定义
+├── Kconfig          # 产品包选项，载入板级 L4Re 配置菜单
 ├── Makefile         # 顶层 Makefile (menuconfig / defconfig)
 └── build/           # 构建产物输出目录
 ```
@@ -35,7 +35,7 @@ turingos/
 | 目标板 | SoC / 架构 | `--board` 参数 | 备注 |
 |--------|-----------|----------------|------|
 | QEMU ARM Virt | Cortex-A15 (ARMv7) | `virt` | **主力开发 / 验证平台**，功能最完整（`run_qemu_virt.sh`） |
-| Raspberry Pi 4B | ARM64 (AArch64) | `rpi4`（CLI 默认） | 支持 QEMU 模拟 |
+| Raspberry Pi 4B | ARM64 (AArch64) | `rpi4`（CLI 默认） | QEMU 需提供 raspi4b 机型 |
 | BeagleBone Black | AM335x / ARM | `bbb` | 仅支持真机部署 |
 | i.MX6UL | Cortex-A7 (ARMv7) | `imx6ul` | QEMU `mcimx6ul-evk` |
 
@@ -45,7 +45,7 @@ turingos/
   - RPi4 (ARM64): `aarch64-elf-gcc` (macOS: `brew install aarch64-elf-gcc`)
   - virt / BBB / imx6ul (ARMv7): `arm-linux-gnueabihf-gcc` (macOS: `brew tap messense/macos-cross-toolchains && brew install arm-unknown-linux-gnueabihf`)
 - **GNU Make 4+** — macOS 自带 Make 3.81 过旧，需 `brew install make`（脚本会自动检测 `gmake`）
-- **Perl** — 内核构建需要
+- **Perl、Python 3.8+** — 内核构建、包注册与依赖查询需要
 - **flex / bison** — menuconfig 功能需要
 - **QEMU**（可选）— `brew install qemu`，用于 virt / RPi4 模拟测试
 
@@ -70,15 +70,30 @@ export CROSS_COMPILE=aarch64-none-elf-
 # 仅构建 L4Re 运行时
 ./build.sh l4re
 
-# 仅生成引导镜像 (需先完成 kernel 和 l4re)
+# 检查入口所需模块并生成引导镜像，复用已有内核
 ./build.sh bootstrap
 
 # 交互式驱动配置
 ./build.sh menuconfig
 
-# 清理所有构建产物
+# 清理当前板的中间产物和镜像
 ./build.sh clean
 ```
+
+每个板型使用独立的配置和构建目录。以下命令配置 virt 开发镜像、重建一个包及其使用方，并运行 SMP 回归测试。
+
+```sh
+make BOARD=virt menuconfig
+./build.sh --board virt all
+ENTRY=lvgl-demo ./build.sh --board virt --pkg klog
+tools/ci_smp_smoke.sh -n 2
+# 冷构建、重链、按板清理和最小镜像回归
+tools/ci_build_smoke.sh
+```
+
+`allnoconfig` 关闭可选产品包，保留板级启动所需的架构和驱动配置。关闭 `PKG_NATIVE_SHELL` 后默认生成 `minimal`。显式设置 `ENTRY` 可构建指定测试入口及其依赖。发布路径为 `build/artifacts/<板型>/<入口>/bootstrap.elf`；`BUILD_OUT` 可指定独立输出目录。清理某块板使用 `./build.sh --board <板型> cleanall`。
+
+日常开发可复用同一个输出目录。检查单包时执行 `./build.sh --board virt --pkg klog --compile-only`，它只构建 klog 及其依赖。准备启动测试时，执行 `./build.sh --board virt --pkg klog` 会重链受影响的程序并打包。完整构建支持 `JOBS=12 ./build.sh --board virt all`，也可使用 `make -j12 BOARD=virt O=build all`。内核版本时间默认取内核提交时间，发布构建可用 `SOURCE_DATE_EPOCH` 和 `KBUILD_BUILD_VERSION` 指定时间和编号。
 
 为 BeagleBone Black 构建时加 `--board bbb`：
 
@@ -94,6 +109,7 @@ export CROSS_COMPILE=aarch64-none-elf-
 ```bash
 ./build.sh --board virt all          # 构建
 ./run_qemu_virt.sh                   # 启动 native-shell（默认，含网络）
+./run_qemu_virt.sh --headless        # 通过串口操作，保留 ramfb 及 virtio 输入
 ./run_qemu_virt.sh --cfg cyclictest  # 启动指定配置
 ./run_qemu_virt.sh --help            # 查看全部选项（--gpu / --disk / --smp 等）
 ```
@@ -109,7 +125,7 @@ export CROSS_COMPILE=aarch64-none-elf-
 ./run_qemu.sh --timeout 5  # 设置超时（秒），0 为不限
 ```
 
-> BBB (AM335x) 不支持 QEMU 模拟，使用 `--check` 可验证镜像结构。
+> BBB (AM335x) 仅支持真机，使用 `--check` 可验证镜像结构。
 
 ## 真机部署（BeagleBone Black）
 
@@ -122,7 +138,7 @@ export CROSS_COMPILE=aarch64-none-elf-
 2. 将 ELF 转换为 U-Boot 可引导的 uImage：
 
    ```bash
-   arm-linux-gnueabihf-objcopy -O binary build/bootstrap.elf bootstrap.bin
+   arm-linux-gnueabihf-objcopy -O binary build/artifacts/bbb/bbb-native-shell/bootstrap.elf bootstrap.bin
    mkimage -A arm -T kernel -C none -a 0x80000000 -e 0x80000000 -d bootstrap.bin uImage
    ```
 
@@ -137,4 +153,4 @@ export CROSS_COMPILE=aarch64-none-elf-
 
 ## 启动项配置
 
-系统启动项通过 `conf/modules.list` 和 `conf/system.ned` 配置。详见 [docs/boot-entry-config.md](docs/boot-entry-config.md)。
+各板的默认入口在 `conf/boards/` 中。构建器读取主仓库的 `conf/modules.list`，按对应 Ned 脚本启动服务。详见 [docs/boot-entry-config.md](docs/boot-entry-config.md)。

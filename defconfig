@@ -80,21 +80,4 @@ CONFIG_L4IO_GPIO_IMX=y
 # CONFIG_VNS_IXL is not set
 # CONFIG_VNS_STATS is not set
 
-#
-# Additional driver packages
-#
-# CONFIG_PKG_ACPICA is not set
-# CONFIG_PKG_ADA is not set
-# CONFIG_PKG_AHCI_DRIVER is not set
-# CONFIG_PKG_ATKINS is not set
-CONFIG_PKG_BCM2835_MBOX_DRIVER=y
-# CONFIG_PKG_GNU_EFI is not set
-# CONFIG_PKG_HELLO is not set
-# CONFIG_PKG_L4VIRTIO is not set
-CONFIG_PKG_LIBBLOCK_DEVICE=y
-# CONFIG_PKG_LIBFDT is not set
-# CONFIG_PKG_LIBVCPU is not set
-# CONFIG_PKG_NVME_DRIVER is not set
-# CONFIG_PKG_READLINE is not set
-# CONFIG_PKG_VIRTIO_NET is not set
-# CONFIG_PKG_ZLIB is not set
+CONFIG_PKG_NATIVE_SHELL=y

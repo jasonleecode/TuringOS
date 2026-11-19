@@ -8,3 +8,5 @@ L4DIR  ?= $(PKGDIR)/../..
 TARGET = protocol tools
 
 include $(L4DIR)/mk/subdir.mk
+
+tools: protocol

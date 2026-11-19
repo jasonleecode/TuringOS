@@ -776,7 +776,7 @@ requires: readline stdlibs compiler-rt rtc_libc_be rtc ds18b20 tef6686hn \
           lwip libc_be_socket_lwip libsigma0 devfs libloader
 ```
 
-**`l4mk/conf/modules.list`**（native-shell entry）：
+**`conf/modules.list`**（native-shell entry）：
 ```
 entry native-shell
 roottask moe rom/native-shell.cfg

@@ -1,0 +1,18 @@
+# Set the same product manifest for direct elfimage builds and build.sh.
+MODULES_LIST := $(abspath $(L4DIR)/../conf/modules.list)
+
+# Track exactly which archives the target linker selected after resolving -l
+# and pkg-config aliases. Seed dependency files once for existing binaries.
+ifneq ($(MODE),host)
+ifneq ($(filter %/prog.mk,$(MAKEFILE_LIST)),)
+turingos_link_targets = $(TARGET)
+LDFLAGS += --dependency-file=.$(@F).turingos-ld.d
+else ifneq ($(filter %/lib.mk,$(MAKEFILE_LIST)),)
+turingos_link_targets = $(filter %.so,$(TARGET))
+LDFLAGS_SO += --dependency-file=.$(@F).turingos-ld.d
+endif
+turingos_link_depfiles = $(foreach t,$(turingos_link_targets),.$(t).turingos-ld.d)
+LIBDEPS += $(if $(filter-out $(wildcard $(turingos_link_depfiles)),$(turingos_link_depfiles)),turingos-link-deps)
+.PHONY: turingos-link-deps
+-include $(wildcard .*.turingos-ld.d)
+endif

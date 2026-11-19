@@ -24,7 +24,7 @@
 #include <l4/sys/factory>
 
 #include <l4/tef6686hn/tef6686hn.h>
-#include <l4/tef6686hn/radio_proto.h>
+#include <l4/turingos/radio_proto.h>
 
 namespace {
 

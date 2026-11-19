@@ -1,2 +1,2 @@
-requires: libblock-device libio-vbus
+requires: libblock-device libio-vbus stdlibs
 maintainer: jasonlee@turingos.org

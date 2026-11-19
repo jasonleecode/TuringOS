@@ -1,240 +1,85 @@
-#!/bin/bash
-# TuringOS 构建脚本
-#
-# 用法:
-#   ./build.sh [--board <board>] <target>
-#
-# 目标板 (--board):
-#   rpi4   - Raspberry Pi 4B, ARM64 (默认)
-#   bbb    - BeagleBone Black, AM335x ARM (真实硬件)
-#   virt   - QEMU ARM Virt, Cortex-A15 (开发测试推荐)
-#
-# 构建目标:
-#   all        - 完整构建 (内核 + L4Re + 引导镜像 + 收集产物)
-#   kernel     - 仅构建 Fiasco 内核
-#   l4re       - 仅构建 L4Re 运行时
-#   bootstrap  - 仅生成引导镜像 (需先完成 kernel 和 l4re)
-#   collect    - 收集构建产物到 build/artifacts 目录
-#   clean      - 清理编译中间文件
-#   cleanall   - 完全清理构建目录
-#
-# 示例:
-#   ./build.sh                      # 默认 RPi4 全量构建
-#   ./build.sh --board virt all     # QEMU virt 全量构建
-#   ./build.sh --board bbb kernel   # BeagleBone Black 构建内核
-#   ./build.sh --board virt collect # 仅收集 virt 构建产物
-#
-# 快速开始 (QEMU 测试):
-#   ./build.sh --board virt all     # 构建
-#   ./run_qemu_virt.sh              # 运行
-#
-# 单独构建某个包 (新增包时):
-#   新增 pkg/<name>/ 后不需要手动处理符号链接, build.sh 会自动同步.
-#   单独重编某包: make -C build/l4re_virt pkg/<name>
-#   注意: 不要用 PKGS= 变量, 正确方式是把包名作为 make 目标.
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
-
-# macOS 自带 Make 3.81 太旧，优先使用 Homebrew 的 GNU Make 4+
-if command -v gmake &>/dev/null; then
-    MAKE=gmake
-else
-    MAKE=make
-fi
-
-PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
-KERNEL_DIR="$PROJ_ROOT/kernel"
+PROJ_ROOT="$(cd "$(dirname "$0")" && pwd -P)"
 CONF_DIR="$PROJ_ROOT/conf"
-BUILD_OUT="$PROJ_ROOT/build"
+KERNEL_DIR="$PROJ_ROOT/kernel"
+BUILD_OUT="${BUILD_OUT:-$PROJ_ROOT/build}"
+MAKE=$(command -v gmake || command -v make)
+JOBS=${JOBS:-$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || echo 4)}
+info() { echo ">>> $*"; }
+warn() { echo ">>> $*" >&2; }
+error() { warn "$@"; exit 1; }
 
-# 颜色输出
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+usage() {
+    cat <<'HELP'
+./build.sh [--board rpi4|bbb|virt|imx6ul] [all|kernel|l4re|bootstrap|collect|clean|cleanall]
+./build.sh --board virt --pkg NAME [--force] [--compile-only]
+./build.sh --board virt menuconfig
+ENTRY selects a boot entry. BUILD_OUT selects the output root. JOBS controls parallelism.
+Each board publishes artifacts/<board>/<entry>/bootstrap.elf.
+HELP
+}
 
-info()  { echo -e "${GREEN}>>> $1${NC}"; }
-warn()  { echo -e "${YELLOW}!!! $1${NC}"; }
-error() { echo -e "${RED}*** $1${NC}"; exit 1; }
-
-# ============================================================
-# 目标板配置
-# ============================================================
-setup_board() {
-    local board="$1"
-    case "$board" in
-        rpi4)
-            BOARD_NAME="Raspberry Pi 4B"
-            BOARD_ARCH="ARM64"
-            export CROSS_COMPILE="${CROSS_COMPILE:-aarch64-elf-}"
-            KERNEL_BUILD="$BUILD_OUT/kernel_arm64"
-            KERNEL_TEMPLATE="arm64-rpi4"
-            L4RE_BUILD="$BUILD_OUT/l4re_arm64"
-            L4RE_TEMPLATE="arm64-rv-v8a"
-            QEMU_CMD="qemu-system-aarch64"
-            BOOTSTRAP_ENTRY="native-shell"
-            ;;
-        bbb)
-            BOARD_NAME="BeagleBone Black (AM335x)"
-            BOARD_ARCH="ARM"
-            BOOTSTRAP_ENTRY="native-shell"
-            # 优先使用 /opt 下的 ARM GNU Toolchain 12.3 (需 GCC 11+，apt 默认 GCC 9 不够)
-            local _arm_opt_toolchain="/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin"
-            if [ -d "$_arm_opt_toolchain" ]; then
-                export PATH="$_arm_opt_toolchain:$PATH"
-                export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-linux-gnueabihf-}"
-            else
-                export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
-            fi
-            # macOS: brew 安装的工具链不在默认 PATH 中
-            local _arm_brew_prefix
-            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
-            if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
-                export PATH="$_arm_brew_prefix/bin:$PATH"
-            fi
-            KERNEL_BUILD="$BUILD_OUT/kernel_arm"
-            KERNEL_TEMPLATE="arm-omap3-am33xx"
-            L4RE_BUILD="$BUILD_OUT/l4re_arm"
-            L4RE_TEMPLATE="arm-omap3-am33xx"
-            QEMU_CMD=""  # AM335x 无 QEMU 支持
-            ;;
-        virt)
-            BOARD_NAME="QEMU ARM Virt (Cortex-A15)"
-            BOARD_ARCH="ARM"
-            # 优先使用 /opt 下的 ARM GNU Toolchain 12.3 (需 GCC 11+，apt 默认 GCC 9 不够)
-            local _arm_opt_toolchain="/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin"
-            if [ -d "$_arm_opt_toolchain" ]; then
-                export PATH="$_arm_opt_toolchain:$PATH"
-                export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-linux-gnueabihf-}"
-            else
-                export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
-            fi
-            # macOS: brew 安装的工具链不在默认 PATH 中
-            local _arm_brew_prefix
-            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
-            if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
-                export PATH="$_arm_brew_prefix/bin:$PATH"
-            fi
-            KERNEL_BUILD="$BUILD_OUT/kernel_virt"
-            KERNEL_TEMPLATE="arm-virt-pl1"
-            L4RE_BUILD="$BUILD_OUT/l4re_virt"
-            L4RE_TEMPLATE="arm-virt-v7a"
-            QEMU_CMD="qemu-system-arm -M virt -cpu cortex-a15"
-            BOOTSTRAP_ENTRY="native-shell"
-            ;;
-        imx6ul)
-            BOARD_NAME="i.MX6UL (Cortex-A7, QEMU mcimx6ul-evk)"
-            BOARD_ARCH="ARM"
-            # 优先使用 /opt 下的 ARM GNU Toolchain 12.3 (需 GCC 11+)
-            local _arm_opt_toolchain="/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin"
-            if [ -d "$_arm_opt_toolchain" ]; then
-                export PATH="$_arm_opt_toolchain:$PATH"
-                export CROSS_COMPILE="${CROSS_COMPILE:-arm-none-linux-gnueabihf-}"
-            else
-                export CROSS_COMPILE="${CROSS_COMPILE:-arm-linux-gnueabihf-}"
-            fi
-            # macOS: brew 安装的工具链不在默认 PATH 中
-            local _arm_brew_prefix
-            _arm_brew_prefix="$(brew --prefix arm-unknown-linux-gnueabihf 2>/dev/null || true)"
-            if [ -n "$_arm_brew_prefix" ] && [ -d "$_arm_brew_prefix/bin" ]; then
-                export PATH="$_arm_brew_prefix/bin:$PATH"
-            fi
-            KERNEL_BUILD="$BUILD_OUT/kernel_imx6ul"
-            KERNEL_TEMPLATE="arm-imx6ul"
-            L4RE_BUILD="$BUILD_OUT/l4re_imx6ul"
-            L4RE_TEMPLATE="arm-imx6ul"
-            QEMU_CMD="qemu-system-arm -M mcimx6ul-evk -cpu cortex-a7"
-            BOOTSTRAP_ENTRY="imx6ul-native-shell"
-            ;;
-        *)
-            error "未知目标板: $board
-支持的目标板:
-  rpi4     Raspberry Pi 4B (ARM64, 默认)
-  bbb      BeagleBone Black (AM335x, ARM)
-  virt     QEMU ARM Virt (Cortex-A15)
-  imx6ul   i.MX6UL (Cortex-A7, QEMU mcimx6ul-evk)"
-            ;;
+requested_entry=${ENTRY:-}
+unset ENTRY
+BOARD=rpi4
+target=all
+pkg=
+force=0
+compile_only=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --board) BOARD=${2:?missing board}; shift 2 ;;
+        --pkg) pkg=${2:?missing package}; target=pkg; shift 2 ;;
+        --compile-only) compile_only=1; shift ;;
+        --force) force=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) target=$1; shift ;;
     esac
-}
-
-# ============================================================
-# 检查构建依赖
-# ============================================================
-check_deps() {
-    info "检查构建依赖..."
-
-    # 检查交叉编译工具链
-    if ! command -v "${CROSS_COMPILE}gcc" &>/dev/null; then
-        case "$BOARD" in
-            bbb)
-                error "找不到交叉编译器: ${CROSS_COMPILE}gcc
-请安装 ARM Linux 工具链:
-  macOS:   brew tap messense/macos-cross-toolchains && brew install arm-unknown-linux-gnueabihf
-  Ubuntu:  sudo apt install gcc-arm-linux-gnueabihf
-  Fedora:  sudo dnf install gcc-arm-linux-gnu
-或设置 CROSS_COMPILE 环境变量指向你的工具链前缀:
-  export CROSS_COMPILE=arm-linux-gnueabihf-"
-                ;;
-            *)
-                error "找不到交叉编译器: ${CROSS_COMPILE}gcc
-请安装 aarch64 工具链:
-  macOS:   brew install aarch64-elf-gcc  (或使用 aarch64-linux-gnu- 前缀的工具链)
-  Ubuntu:  sudo apt install gcc-aarch64-linux-gnu
-  Fedora:  sudo dnf install gcc-aarch64-linux-gnu
-或设置 CROSS_COMPILE 环境变量指向你的工具链前缀:
-  export CROSS_COMPILE=aarch64-none-elf-"
-                ;;
-        esac
+done
+case "$BOARD" in virt|imx6ul|bbb|rpi4) ;; *) error "Unknown board: $BOARD";; esac
+[[ $compile_only == 0 || $target == pkg ]] || error "--compile-only requires --pkg NAME"
+source "$CONF_DIR/boards/$BOARD.conf"
+mkdir -p "$BUILD_OUT"
+BUILD_OUT=$(cd "$BUILD_OUT" && pwd -P)
+KERNEL_BUILD="$BUILD_OUT/kernel_$BUILD_KEY"
+L4RE_BUILD="$BUILD_OUT/l4re_$BUILD_KEY"
+ARTIFACTS="$BUILD_OUT/artifacts/$BOARD"
+# The shell retains the open file description while make, packaging or clean runs.
+exec 9>>"$BUILD_OUT/.$BOARD.lock"
+python3 -c 'import fcntl; fcntl.flock(9, fcntl.LOCK_EX)'
+JOBS=${JOBS:?}
+[[ $JOBS =~ ^[1-9][0-9]*$ ]] || error "Invalid JOBS: $JOBS"
+parallel=(-j"$JOBS")
+if [[ ${TURINGOS_JOBSERVER:-0} == 1 ]]; then parallel=(); fi
+if [[ $ARCH == arm ]]; then
+    toolbin=/opt/arm-gnu-toolchain-12.3.rel1-x86_64-arm-none-linux-gnueabihf/bin
+    if [[ -d $toolbin ]]; then
+        export PATH="$toolbin:$PATH"
+        : "${CROSS_COMPILE:=arm-none-linux-gnueabihf-}"
+    else
+        : "${CROSS_COMPILE:=arm-linux-gnueabihf-}"
     fi
-
-    # 检查 make
-    if ! command -v $MAKE &>/dev/null; then
-        error "找不到 $MAKE，请先安装 GNU Make 4+"
-    fi
-
-    # 检查 perl (内核构建需要)
-    if ! command -v perl &>/dev/null; then
-        error "找不到 perl，内核构建需要它"
-    fi
-
-    # 检查 qemu (可选，仅用于运行)
-    if [ -n "$QEMU_CMD" ] && ! command -v "$(echo "$QEMU_CMD" | cut -d' ' -f1)" &>/dev/null; then
-        warn "找不到 $(echo "$QEMU_CMD" | cut -d' ' -f1)，构建可以继续但无法运行"
-    fi
-
-    # 检查 flex/bison (kconfig 工具构建需要)
-    if ! command -v flex &>/dev/null; then
-        warn "找不到 flex，menuconfig 功能需要它"
-    fi
-    if ! command -v bison &>/dev/null; then
-        warn "找不到 bison，menuconfig 功能需要它"
-    fi
-
-    info "依赖检查通过"
-}
-
-# ============================================================
-# 初始化 Git 子模块
-# ============================================================
-init_submodules() {
-    info "检查 Git 子模块..."
-    cd "$PROJ_ROOT"
-
-    if [ ! -f "$KERNEL_DIR/Makefile" ] || [ ! -f "$PROJ_ROOT/l4re/Makefile" ]; then
-        info "初始化 Git 子模块..."
-        git submodule update --init --recursive
+elif command -v aarch64-elf-gcc >/dev/null; then
+    : "${CROSS_COMPILE:=aarch64-elf-}"
+else
+    : "${CROSS_COMPILE:=aarch64-linux-gnu-}"
+fi
+export CROSS_COMPILE
+init_sources() {
+    if [[ ! -f $KERNEL_DIR/Makefile || ! -f $PROJ_ROOT/l4mk/Makefile ||
+          ! -f $PROJ_ROOT/l4re/Makefile || ! -f $PROJ_ROOT/pkg/filesystem/ext4/contrib/include/ext4.h ||
+          ! -f $PROJ_ROOT/pkg/lvgl/liblvgl/src/lvgl/lvgl.h ]]; then
+        git -C "$PROJ_ROOT" submodule update --init --recursive
     fi
 }
-
-# ============================================================
-# 构建 Fiasco 内核
-# ============================================================
-build_kernel() {
+build_kernel() (
     info "构建 Fiasco 内核 (模板: $KERNEL_TEMPLATE)..."
     cd "$KERNEL_DIR"
 
     # 检查 build 目录的 Makefile 中 srcdir 是否正确
-    local need_rebuild=0
+    local need_rebuild=0 previous=""
     if [ -f "$KERNEL_BUILD/Makefile" ]; then
         if ! grep -qF "srcdir  := $KERNEL_DIR/src" "$KERNEL_BUILD/Makefile"; then
             warn "内核构建目录的源码路径过期，将重新创建"
@@ -245,596 +90,232 @@ build_kernel() {
     fi
 
     if [ "$need_rebuild" -eq 1 ]; then
-        rm -rf "$KERNEL_BUILD"
+        if [[ -d $KERNEL_BUILD ]]; then
+            previous=$(mktemp -d "$BUILD_OUT/.previous-kernel-$BUILD_KEY.XXXXXX")
+            mv "$KERNEL_BUILD" "$previous/"
+            info "Previous kernel build: $previous"
+        fi
         mkdir -p "$(dirname "$KERNEL_BUILD")"
         info "创建内核构建目录 (模板: $KERNEL_TEMPLATE)..."
         $MAKE BUILDDIR="$KERNEL_BUILD" T="$KERNEL_TEMPLATE"
+        if [[ -n $previous && -s $previous/${KERNEL_BUILD##*/}/globalconfig.out ]]; then
+            cp "$previous/${KERNEL_BUILD##*/}/globalconfig.out" "$KERNEL_BUILD/globalconfig.out"
+            $MAKE -C "$KERNEL_BUILD" olddefconfig
+        fi
     fi
 
     # imx6ul: 禁用 HYP/虚拟化 — mcimx6ul-evk QEMU 不支持 PSCI HYP 模式切换
-    if [ "$BOARD" = "imx6ul" ] && [ -f "$KERNEL_BUILD/globalconfig.out" ]; then
+    if [[ $BOARD == imx6ul ]] && grep -qx CONFIG_CPU_VIRT=y "$KERNEL_BUILD/globalconfig.out"; then
         info "imx6ul: 禁用 CONFIG_CPU_VIRT (mcimx6ul-evk 不支持 HYP 切换)"
         sed -i 's/^CONFIG_CPU_VIRT=y/# CONFIG_CPU_VIRT is not set/' "$KERNEL_BUILD/globalconfig.out"
-        $MAKE -C "$KERNEL_BUILD" olddefconfig CROSS_COMPILE="$CROSS_COMPILE" 2>&1 | grep -E "^(#|CONFIG_CPU_VIRT)" || true
+        $MAKE -C "$KERNEL_BUILD" olddefconfig CROSS_COMPILE="$CROSS_COMPILE"
     fi
+
+    # A new invocation alone must not invalidate the kernel link.
+    : "${SOURCE_DATE_EPOCH:=$(git -C "$KERNEL_DIR" log -1 --format=%ct 2>/dev/null || echo 0)}"
+    [[ $SOURCE_DATE_EPOCH =~ ^[0-9]+$ && ${KBUILD_BUILD_VERSION:-1} =~ ^[0-9]+$ ]] || error "Invalid kernel build epoch or version"
+    export SOURCE_DATE_EPOCH
 
     # 编译内核
     info "编译内核..."
-    $MAKE -C "$KERNEL_BUILD" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
+    $MAKE -C "$KERNEL_BUILD" "${parallel[@]}"
 
     if [ -f "$KERNEL_BUILD/fiasco" ]; then
         info "内核已编译: $KERNEL_BUILD/fiasco"
     else
         error "内核编译失败: 找不到 fiasco 二进制文件"
     fi
+)
+
+board_make() {
+    "$MAKE" -C "$L4RE_BUILD" L4DIR="$PROJ_ROOT/l4mk" CROSS_COMPILE="$CROSS_COMPILE" "$@"
 }
 
-# ============================================================
-# 构建 L4Re 运行时环境
-# ============================================================
-# 同步 pkg/ 下所有包到 l4mk/pkg/ 的符号链接
-# 必须在每次构建前调用，确保新增包能被构建系统发现
-sync_pkg_symlinks() {
-    local l4mk_pkg="$PROJ_ROOT/l4mk/pkg"
-
-    # 清理失效的符号链接（目标不存在的链接会导致编译报错）
-    for lnk in "$l4mk_pkg"/*; do
-        [ -L "$lnk" ] || continue
-        local abs_target
-        abs_target=$(cd "$(dirname "$lnk")" && realpath -m "$(readlink "$lnk")" 2>/dev/null)
-        if [ ! -e "$abs_target" ]; then
-            rm "$lnk"
-            info "删除失效符号链接: l4mk/pkg/$(basename "$lnk")"
-        fi
-    done
-
-    # l4re-core 指向 l4re 子模块
-    if [ ! -e "$l4mk_pkg/l4re-core" ]; then
-        ln -s ../../l4re "$l4mk_pkg/l4re-core"
-        info "创建符号链接: l4mk/pkg/l4re-core -> ../../l4re"
+# Keep the board and architecture even when resetting optional product packages.
+board_defaults() {
+    if [[ $BOARD == rpi4 ]]; then
+        echo CONFIG_BUILD_ARCH_arm64=y
+        echo CONFIG_PLATFORM_TYPE_rpi=y
+        cat "$PROJ_ROOT/defconfig"
+    else
+        cat "$PROJ_ROOT/l4mk/mk/defconfig/config.$L4RE_TEMPLATE"
     fi
+}
 
-    for pkg_dir in "$PROJ_ROOT"/pkg/*/; do
-        local pkg_name
-        pkg_name="$(basename "$pkg_dir")"
-        if [ ! -f "${pkg_dir}Control" ]; then
-            # 命名空间目录（如 pkg/lvgl/）：只创建命名空间目录本身的链接。
-            # pkgfind 会通过命名空间链接发现其中的子包（lvgl/liblvgl、lvgl/demo），
-            # 不需要额外创建各子包的独立链接——否则会导致 pkgfind 重复发现同一个包。
-            # 命名空间目录链接也是 Makeconf.local 路径重映射所必需的：
-            #   CURDIR 解析为 pkg/lvgl/liblvgl/src，重映射后 SRC_DIR = l4mk/pkg/lvgl/liblvgl/src
-            local has_subpkg=0
-            for subpkg_dir in "${pkg_dir}"*/; do
-                [ -f "${subpkg_dir}Control" ] && { has_subpkg=1; break; }
-            done
-            if [ "$has_subpkg" -eq 1 ] && [ ! -e "$l4mk_pkg/$pkg_name" ]; then
-                ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
-                info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
-            fi
+prepare_board() {
+    init_sources
+    python3 "$PROJ_ROOT/tools/build_packages.py" register "$PROJ_ROOT"
+    local saved_config=""
+    if [[ -f $L4RE_BUILD/Makefile ]] &&
+       { ! grep -Fxq "OBJ := $L4RE_BUILD" "$L4RE_BUILD/Makefile" ||
+         ! grep -Fxq "SRC := $PROJ_ROOT/l4mk" "$L4RE_BUILD/Makefile"; }; then
+        # Generated makefiles, command records and install links embed absolute paths.
+        # Preserve the old tree (including local overrides) and re-use its Kconfig choices.
+        local previous
+        previous=$(mktemp -d "$BUILD_OUT/.previous-$BUILD_KEY.XXXXXX")
+        mv "$L4RE_BUILD" "$previous/"
+        saved_config="$previous/${L4RE_BUILD##*/}/.kconfig"
+        info "Recreating relocated board tree; previous outputs: $previous"
+    fi
+    if [[ -f $L4RE_BUILD/.kconfig && ! -f $L4RE_BUILD/.config.all ]]; then
+        "$MAKE" -C "$PROJ_ROOT/l4mk" O="$L4RE_BUILD" olddefconfig
+    fi
+    if [[ ! -f $L4RE_BUILD/.config.all ]]; then
+        [[ ! -e $L4RE_BUILD ]] || error "Incomplete board tree: $L4RE_BUILD (use cleanall to reset)"
+        local defaults
+        defaults=$(mktemp "$BUILD_OUT/.defconfig.$BOARD.XXXXXX")
+        if [[ -s $saved_config ]]; then
+            sed '/^CONFIG_PLATFORM_TYPE_.*=y$/d' "$saved_config" > "$defaults"
         else
-            if [ ! -e "$l4mk_pkg/$pkg_name" ]; then
-                ln -s "../../pkg/$pkg_name" "$l4mk_pkg/$pkg_name"
-                info "创建符号链接: l4mk/pkg/$pkg_name -> ../../pkg/$pkg_name"
-            fi
+            board_defaults | sed '/^CONFIG_PLATFORM_TYPE_.*=y$/d' > "$defaults"
         fi
-    done
-}
-
-build_l4re() {
-    info "构建 L4Re 运行时环境..."
-
-    local l4mk_dir="$PROJ_ROOT/l4mk"
-
-    # 确保所有 pkg/ 下的包都已链接到 l4mk/pkg/（新增包无需手动操作）
-    sync_pkg_symlinks
-
-    # project.mk 的 find 命令不会跟随符号链接来发现 prj-config/aliases.d,
-    # 需要将各子项目的别名文件合并到 l4mk/mk/aliases.d/ (该目录已在搜索路径中).
-    # 多个包可能有同名的别名文件 (如 05-compiler-rt), 需要合并而非覆盖
-    local aliases_dst="$PROJ_ROOT/l4mk/mk/aliases.d"
-    local alias_dirs
-    alias_dirs=$(find "$PROJ_ROOT/l4re" "$PROJ_ROOT/pkg" \
-                 -maxdepth 5 -type d -name aliases.d \
-                 -path "*/prj-config/aliases.d" 2>/dev/null || true)
-    local aliases_changed=0
-    for adir in $alias_dirs; do
-        for f in "$adir"/*; do
-            [ -f "$f" ] || continue
-            local fname="$(basename "$f")"
-            local dst="$aliases_dst/$fname"
-            if [ ! -e "$dst" ]; then
-                cp "$f" "$dst"
-                aliases_changed=1
-            else
-                # 检查是否有尚未包含的别名定义行 (非注释、非空行)
-                local need_merge=0
-                while IFS= read -r line; do
-                    [ -z "$line" ] && continue
-                    case "$line" in \#*) continue ;; esac
-                    if ! grep -qF "$line" "$dst" 2>/dev/null; then
-                        need_merge=1
-                        break
-                    fi
-                done < "$f"
-                if [ "$need_merge" -eq 1 ]; then
-                    echo "" >> "$dst"
-                    cat "$f" >> "$dst"
-                    aliases_changed=1
-                fi
-            fi
-        done
-    done
-    if [ "$aliases_changed" -eq 1 ]; then
-        info "已合并包别名定义到 l4mk/mk/aliases.d/"
+        "$MAKE" -C "$PROJ_ROOT/l4mk" B="$L4RE_BUILD" DEFCONFIG="$defaults" PLATFORM_TYPE="$PLATFORM"
+        rm -f "$defaults"
     fi
-
-    # 生成 Makeconf.local: 修复符号链接导致的路径问题
-    # make -C 会解析符号链接, 导致 CURDIR 指向物理路径 (l4re/、pkg/drivers/),
-    # 而非逻辑路径 (l4mk/pkg/l4re-core/、l4mk/pkg/drivers/).
-    # 这使得包被误判为 "external package", 构建产物路径错误.
-    # 此 Makeconf.local 将物理路径重映射回 l4mk/pkg/ 下的逻辑路径.
-    local makeconf_local="$l4mk_dir/Makeconf.local"
-    if [ ! -e "$makeconf_local" ]; then
-        cat > "$makeconf_local" << 'MAKECONF_EOF'
-# Auto-generated by build.sh — DO NOT EDIT
-# Remap symlinked package paths back to l4mk/pkg/ logical paths
-#
-# Problem: make -C resolves symlinks, so packages accessed via
-#   l4mk/pkg/l4re-core -> ../../l4re
-#   l4mk/pkg/drivers   -> ../../pkg/drivers
-# end up with CURDIR pointing to the physical path (l4re/*, pkg/drivers/*).
-# This causes the build system to treat them as "external packages".
-# Fix: remap CURDIR-based variables back to l4mk/pkg/ logical paths.
-
-# Export absolute L4DIR so sub-makes through symlinked paths get the correct
-# value instead of computing it from broken relative paths.
-L4DIR := $(abspath $(L4DIR))
-export L4DIR
-export CROSS_COMPILE
-
-ifdef OBJ_BASE
-_L4_ABS := $(abspath $(L4DIR))
-_PRJ := $(abspath $(L4DIR)/..)
-
-# Skip remapping if we're inside the build directory (OBJ_BASE)
-ifeq ($(patsubst $(OBJ_BASE)/%,,$(CURDIR)),$(CURDIR))
-
-# l4re/<pkg>/ → l4mk/pkg/l4re-core/<pkg>/
-ifneq ($(patsubst $(_PRJ)/l4re/%,,$(CURDIR)),$(CURDIR))
-  _REL := $(patsubst $(_PRJ)/l4re/%,%,$(CURDIR))
-  SRC_DIR    := $(_L4_ABS)/pkg/l4re-core/$(_REL)
-  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
-  OBJ_DIR    := $(OBJ_BASE)/pkg/l4re-core/$(_REL)
-  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
-  L4DIR      := $(_L4_ABS)
-endif
-
-# pkg/<name>/... → l4mk/pkg/<name>/...
-ifneq ($(patsubst $(_PRJ)/pkg/%,,$(CURDIR)),$(CURDIR))
-  _REL := $(patsubst $(_PRJ)/pkg/%,%,$(CURDIR))
-  SRC_DIR    := $(_L4_ABS)/pkg/$(_REL)
-  PKGDIR_ABS := $(abspath $(SRC_DIR)/$(PKGDIR))
-  OBJ_DIR    := $(OBJ_BASE)/pkg/$(_REL)
-  PKGDIR_OBJ := $(abspath $(OBJ_DIR)/$(PKGDIR))
-  L4DIR      := $(_L4_ABS)
-endif
-
-endif
-endif
-MAKECONF_EOF
-        info "生成 l4mk/Makeconf.local (路径重映射)"
+    mkdir -p "$L4RE_BUILD/conf"
+    local board_mk="$L4RE_BUILD/conf/Makeconf.local"
+    if [[ ! -e $board_mk ]]; then
+        ln -s "$CONF_DIR/Makeconf.board" "$board_mk"
+    elif [[ ! $board_mk -ef $CONF_DIR/Makeconf.board ]] &&
+         ! grep -qF "$CONF_DIR/Makeconf.board" "$board_mk"; then
+        printf '\ninclude %s\n' "$CONF_DIR/Makeconf.board" >> "$board_mk"
     fi
-
-    # 检查构建目录是否存在且配置完整
-    if [ ! -d "$L4RE_BUILD" ] || [ ! -f "$L4RE_BUILD/.config.all" ]; then
-        if [ -d "$L4RE_BUILD" ] && [ ! -f "$L4RE_BUILD/.config.all" ]; then
-            warn "构建目录存在但配置不完整，重新初始化..."
-            rm -rf "$L4RE_BUILD"
-        fi
-
-        info "创建 L4Re 构建目录 (模板: $L4RE_TEMPLATE)..."
-        # PLATFORM_TYPE 应该与模板名称对应，从 defconfig 文件中提取
-        # 但由于 defconfig 已包含正确的 PLATFORM_TYPE，我们传递空值以避免重复
-        $MAKE -C "$l4mk_dir" B="$L4RE_BUILD" T="$L4RE_TEMPLATE" PLATFORM_TYPE= CROSS_COMPILE="${CROSS_COMPILE}"
-
-        # 验证配置文件是否正确生成
-        if [ ! -f "$L4RE_BUILD/.config.all" ]; then
-            warn "配置文件未自动生成，手动运行 olddefconfig..."
-            $MAKE -C "$l4mk_dir" O="$L4RE_BUILD" CROSS_COMPILE="${CROSS_COMPILE}" olddefconfig
-        fi
-
-        # 再次验证
-        if [ ! -f "$L4RE_BUILD/.config.all" ]; then
-            error "L4Re 构建目录配置失败，请检查构建环境"
-        fi
-        info "L4Re 构建目录已初始化"
-    fi
-
-    cd "$L4RE_BUILD"
-    # 传递绝对 L4DIR 以避免符号链接解析导致的相对路径错误:
-    # 包的 Makefile 使用 L4DIR ?= $(PKGDIR)/../../.. 来定位构建系统,
-    # 但 make -C 会解析符号链接, 导致相对路径失效
-    # 同时传递 CROSS_COMPILE 确保编译器一致性
-    $MAKE L4DIR="$l4mk_dir" CROSS_COMPILE="${CROSS_COMPILE}" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-    info "L4Re 构建完成"
-}
-
-# ============================================================
-# 生成引导镜像 (bootstrap.elf)
-# ============================================================
-build_bootstrap() {
-    info "生成引导镜像..."
-
-    if [ ! -d "$L4RE_BUILD" ]; then
-        error "L4Re 构建目录不存在，请先构建 L4Re"
-    fi
-
-    if [ ! -f "$KERNEL_BUILD/fiasco" ]; then
-        error "内核尚未编译，请先构建内核"
-    fi
-
-    # 设置模块搜索路径: 内核目录 + L4Re bin + L4Re lib + 配置文件
-    # bin 目录包含可执行文件，lib 包含共享库 (.so)
-    # 架构子目录名因板子不同，动态查找第一个存在的
-    local arch_bin arch_lib
-    arch_bin=$(find "$L4RE_BUILD/bin" -mindepth 2 -maxdepth 2 -type d 2>/dev/null | head -1)
-    arch_lib=$(find "$L4RE_BUILD/lib" -mindepth 3 -maxdepth 3 -type d -path "*/std/l4f" 2>/dev/null | head -1)
-    arch_bin="${arch_bin:-$L4RE_BUILD/bin}"
-    arch_lib="${arch_lib:-$L4RE_BUILD/lib}"
-    export MODULE_SEARCH_PATH="$KERNEL_BUILD:${arch_bin}:${arch_lib}:$CONF_DIR"
-
-    # 选择要生成的启动入口列表
-    # 可通过环境变量 ENTRY 指定单个入口，默认生成所有 virt 常用入口
-    cd "$L4RE_BUILD"
-
-    if [ -n "$ENTRY" ]; then
-        info "使用启动入口: $ENTRY"
-        $MAKE E="$ENTRY" elfimage
-    else
-        local entry="${BOOTSTRAP_ENTRY:-native-shell}"
-        info "生成启动入口: $entry"
-        $MAKE E="$entry" elfimage
-    fi
-
-    # 复制引导镜像到输出目录
-    if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
-        cp "$L4RE_BUILD/images/bootstrap.elf" "$BUILD_OUT/"
-        info "引导镜像已生成: $BUILD_OUT/bootstrap.elf"
-        info "可使用 ./run_qemu_virt.sh 启动系统（含网络、ext4、RTC）"
-    else
-        error "引导镜像生成失败"
+    # Older trees predate the product Kconfig or were configured for VExpress.
+    if ! grep -qx "CONFIG_PLATFORM_TYPE=$PLATFORM" "$L4RE_BUILD/.config.all"; then
+        warn "Updating L4Re platform to $PLATFORM for $BOARD"
+        sed '/^CONFIG_PLATFORM_TYPE_.*=y$/d' "$L4RE_BUILD/.kconfig" > "$L4RE_BUILD/.kconfig.board"
+        echo "CONFIG_PLATFORM_TYPE_$PLATFORM=y" >> "$L4RE_BUILD/.kconfig.board"
+        mv "$L4RE_BUILD/.kconfig.board" "$L4RE_BUILD/.kconfig"
+        board_make olddefconfig
+    elif ! grep -q 'CONFIG_PKG_NATIVE_SHELL' "$L4RE_BUILD/.kconfig"; then
+        board_make olddefconfig
     fi
 }
 
-# ============================================================
-# 单包重建 (--pkg <name>)
-#
-# 解决"改了包内源码/头文件后改动不进镜像"的老问题：l4mk/pkg/ 下的符号链接包被
-# L4Re 当作 "external package"，产出落在 ext-pkg/<绝对路径>/ 而非 pkg/。
-# `make pkg/<name>` 只碰 pkg/（常为 stale），不碰 ext-pkg/——而后者才是打入镜像
-# 的二进制。这里直接定位该包在 pkg/ 与 ext-pkg/ 两处的所有 OBJ-* 目录并编译，
-# 再自动重新打包引导镜像，一步到位。
-#
-#   ./build.sh --board virt --pkg native_shell        # 重建并重打包默认入口
-#   ./build.sh --board virt --pkg ext4 --force        # 先 clean 再建（依赖库变动后强制重链）
-#   ENTRY=cyclictest ./build.sh --board virt --pkg native_shell   # 指定重打包入口
-#
-# 提示：若改的是 l4re 核心库的头文件（libc/l4re_vfs/ldso 等），依赖它的包二进制
-# 不会自动重链，用 --force 对受影响的包强制 clean+重建即可拉到新代码。
-# ============================================================
-build_pkg() {
-    local name="$1"
-    local force="${2:-0}"
-    [ -n "$name" ] || error "用法: $0 --board <board> --pkg <name> [--force]"
-
-    if [ ! -d "$L4RE_BUILD" ]; then
-        error "L4Re 构建树不存在 ($L4RE_BUILD)。请先: ./build.sh --board $BOARD l4re"
-    fi
-
-    # 在 pkg/ 与 ext-pkg/ 两处查找名为 <name> 的目录下的所有 OBJ-* 构建目录。
-    # -path "*/$name/*" 要求 name 是完整一级目录名（"/spawn/" 不会误中 "/spawnd/"）。
-    # 同名包通常有多个 OBJ（std-l4f / nofpu-l4f 多变体，或 client+server 多子目录）。
-    local found
-    found=$(find "$L4RE_BUILD/pkg" "$L4RE_BUILD/ext-pkg" \
-                 -type d -name "OBJ-*" -path "*/$name/*" 2>/dev/null | sort)
-
-    [ -n "$found" ] || error "找不到包 '$name' 的 OBJ 构建目录。检查包名，或先 ./build.sh --board $BOARD l4re。"
-
-    # 依赖顺序：先建库（client/ 与 lib/），再建可执行（server/），否则 --force 下
-    # 二进制可能链接到尚未重建的旧库（本代码库约定 server/src 为可执行程序）。
-    local objs
-    objs=$(printf '%s\n' "$found" | grep -v "/server/" || true)
-    objs=$(printf '%s\n%s\n' "$objs" "$(printf '%s\n' "$found" | grep "/server/" || true)" | grep -v '^$')
-
-    local jobs
-    jobs="$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
-
-    local obj
-    while IFS= read -r obj; do
-        [ -n "$obj" ] || continue
-        if [ "$force" = "1" ]; then
-            info "清理: ${obj#"$L4RE_BUILD"/}"
-            $MAKE -C "$obj" clean >/dev/null || error "clean 失败: $obj"
-        fi
-        info "构建: ${obj#"$L4RE_BUILD"/}"
-        $MAKE -C "$obj" -j"$jobs" || error "构建失败: $obj"
-    done <<< "$objs"
-
-    info "包 '$name' 重建完成，重新打包引导镜像..."
-    build_bootstrap
-}
-
-# ============================================================
-# 清理构建产物
-# ============================================================
-do_clean() {
-    local clean_type="${1:-full}"
-
-    if [ "$clean_type" = "full" ]; then
-        info "完全清理构建产物..."
-
-        # 清理内核构建目录
-        if [ -d "$KERNEL_BUILD" ]; then
-            info "  清理内核构建目录: $KERNEL_BUILD"
-            rm -rf "$KERNEL_BUILD"
-        fi
-
-        # 清理 L4Re 构建目录
-        if [ -d "$L4RE_BUILD" ]; then
-            info "  清理 L4Re 构建目录: $L4RE_BUILD"
-            rm -rf "$L4RE_BUILD"
-        fi
-
-        # 清理 artifacts 目录
-        if [ -d "$BUILD_OUT/artifacts" ]; then
-            info "  清理 artifacts 目录"
-            rm -rf "$BUILD_OUT/artifacts"
-        fi
-
-        # 清理 bootstrap.elf
-        if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
-            info "  清理 bootstrap.elf"
-            rm -f "$BUILD_OUT/bootstrap.elf"
-        fi
-
-    else
-        # 轻度清理：只清理编译中间文件
-        info "轻度清理（保留构建目录结构）..."
-
-        # 清理内核
-        if [ -d "$KERNEL_BUILD" ]; then
-            info "  清理内核中间文件"
-            $MAKE -C "$KERNEL_BUILD" clean 2>/dev/null || true
-        fi
-
-        # 清理 L4Re
-        if [ -d "$L4RE_BUILD" ]; then
-            info "  清理 L4Re 中间文件"
-            $MAKE -C "$L4RE_BUILD" clean 2>/dev/null || true
-        fi
-
-        # 清理 bootstrap.elf
-        if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
-            rm -f "$BUILD_OUT/bootstrap.elf"
-        fi
-    fi
-
-    info "清理完成"
-}
-
-# ============================================================
-# 收集构建产物
-# ============================================================
-collect_artifacts() {
-    info "收集构建产物到 $BUILD_OUT/artifacts/..."
-
-    local artifacts_dir="$BUILD_OUT/artifacts"
-    mkdir -p "$artifacts_dir"
-
-    # 收集内核
-    if [ -f "$KERNEL_BUILD/fiasco" ]; then
-        cp "$KERNEL_BUILD/fiasco" "$artifacts_dir/fiasco-${BOARD}"
-        info "✓ 内核: fiasco-${BOARD}"
-    fi
-
-    # 收集 bootstrap（完整引导镜像）
-    if [ -f "$L4RE_BUILD/images/bootstrap.elf" ]; then
-        cp "$L4RE_BUILD/images/bootstrap.elf" "$artifacts_dir/bootstrap-image-${BOARD}.elf"
-        info "✓ Bootstrap 完整镜像: bootstrap-image-${BOARD}.elf"
-    else
-        warn "✗ Bootstrap 完整镜像未找到 (需要运行: ./build.sh --board ${BOARD} bootstrap)"
-    fi
-
-    # 收集 build 根目录下的 bootstrap.elf（如果存在）
-    if [ -f "$BUILD_OUT/bootstrap.elf" ]; then
-        cp "$BUILD_OUT/bootstrap.elf" "$artifacts_dir/bootstrap-final-${BOARD}.elf"
-        info "✓ 最终引导镜像: bootstrap-final-${BOARD}.elf"
-    fi
-
-    # 创建说明文件
-    cat > "$artifacts_dir/README.md" << EOF
-# TuringOS 构建产物
-
-构建时间: $(date)
-目标板: $BOARD_NAME ($BOARD_ARCH)
-交叉编译器: ${CROSS_COMPILE}gcc
-
-## 文件列表
-
-### 内核
-EOF
-
-    if [ -f "$artifacts_dir/fiasco-${BOARD}" ]; then
-        echo "- \`fiasco-${BOARD}\` - Fiasco 微内核" >> "$artifacts_dir/README.md"
-    fi
-
-    cat >> "$artifacts_dir/README.md" << EOF
-
-### Bootstrap
-EOF
-
-    if [ -f "$artifacts_dir/bootstrap-image-${BOARD}.elf" ]; then
-        echo "- \`bootstrap-image-${BOARD}.elf\` - 包含所有模块的完整引导镜像" >> "$artifacts_dir/README.md"
-    fi
-    if [ -f "$artifacts_dir/bootstrap-final-${BOARD}.elf" ]; then
-        echo "- \`bootstrap-final-${BOARD}.elf\` - 最终引导镜像（包含内核和模块）" >> "$artifacts_dir/README.md"
-    fi
-
-    cat >> "$artifacts_dir/README.md" << EOF
-
-## 生成完整镜像
-
-如果需要包含所有模块的完整引导镜像，请运行：
-\`\`\`bash
-./build.sh --board ${BOARD} bootstrap
-\`\`\`
-
----
-自动生成于 $(date +"%Y-%m-%d %H:%M:%S")
-EOF
-
-    info "构建产物已收集到: $artifacts_dir"
-    ls -lh "$artifacts_dir"
-}
-
-# ============================================================
-# 主流程
-# ============================================================
-main() {
-    # 解析 --board 参数
-    local board="rpi4"
-    local target=""
-    local pkg_name=""
-    local force=0
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --board)
-                board="$2"
-                shift 2
-                ;;
-            --pkg)
-                target="pkg"
-                pkg_name="${2:-}"
-                shift
-                [ $# -gt 0 ] && shift
-                ;;
-            --force)
-                force=1
-                shift
-                ;;
-            -h|--help)
-                show_usage
-                exit 0
-                ;;
-            *)
-                target="$1"
-                shift
-                ;;
-        esac
-    done
-
-    target="${target:-all}"
-
-    # 设置目标板相关变量
-    BOARD="$board"
-    setup_board "$board"
-
-    echo "========================================"
-    echo "  TuringOS 构建系统"
-    echo "  目标板: $BOARD_NAME ($BOARD_ARCH)"
-    echo "  交叉编译器: ${CROSS_COMPILE}gcc"
-    echo "========================================"
-
+configure() {
+    prepare_board
     case "$target" in
-        all)
-            check_deps
-            init_submodules
-            build_kernel
-            build_l4re
-            build_bootstrap
-            collect_artifacts
-            ;;
-        kernel)
-            check_deps
-            init_submodules
-            build_kernel
-            collect_artifacts
-            ;;
-        l4re)
-            check_deps
-            build_l4re
-            collect_artifacts
-            ;;
-        bootstrap)
-            build_bootstrap
-            collect_artifacts
-            ;;
-        pkg)
-            build_pkg "$pkg_name" "$force"
-            ;;
-        collect)
-            collect_artifacts
-            ;;
-        clean)
-            do_clean "light"
-            ;;
-        cleanall)
-            do_clean "full"
-            ;;
-        *)
-            show_usage
-            exit 1
-            ;;
+        defconfig) board_defaults > "$L4RE_BUILD/.kconfig"; board_make olddefconfig ;;
+        allnoconfig|allyesconfig)
+            local sym new="$L4RE_BUILD/.kconfig.product"
+            sed '/^\(# \)\?CONFIG_PKG_/d' "$L4RE_BUILD/.kconfig" > "$new"
+            while read -r sym; do
+                if [[ $target == allnoconfig ]]; then echo "# CONFIG_$sym is not set"
+                else echo "CONFIG_$sym=y"; fi
+            done < <(awk '$1=="config" && $2 ~ /^PKG_/ {print $2}' "$PROJ_ROOT/Kconfig") >> "$new"
+            mv "$new" "$L4RE_BUILD/.kconfig"
+            board_make olddefconfig ;;
+        *) board_make "$target" ;;
     esac
-
-    info "构建完成!"
+}
+select_entry() {
+    if [[ -n $requested_entry ]]; then entry=$requested_entry
+    elif grep -qx CONFIG_PKG_NATIVE_SHELL=y "$L4RE_BUILD/.config.all"; then entry=$SHELL_ENTRY
+    else entry=minimal; fi
+    [[ $entry =~ ^[[:alnum:]_-]+$ ]] || error "Invalid entry: $entry"
+    image="$L4RE_BUILD/images/bootstrap_${entry}.elf"
 }
 
-show_usage() {
-    echo "用法: $0 [--board <board>] {all|kernel|l4re|bootstrap|collect|clean|cleanall}"
-    echo "      $0 [--board <board>] --pkg <name> [--force]"
-    echo ""
-    echo "目标板 (--board):"
-    echo "  rpi4        Raspberry Pi 4B, ARM64 (默认)"
-    echo "  bbb         BeagleBone Black, AM335x ARM"
-    echo "  virt        QEMU ARM Virt (Cortex-A15)"
-    echo "  imx6ul      i.MX6UL, Cortex-A7 (QEMU mcimx6ul-evk)"
-    echo ""
-    echo "构建目标:"
-    echo "  all         完整构建 (内核 + L4Re + 引导镜像 + 收集产物)"
-    echo "  kernel      仅构建 Fiasco 内核"
-    echo "  l4re        仅构建 L4Re 运行时"
-    echo "  bootstrap   仅生成引导镜像 (需先完成 kernel 和 l4re)"
-    echo "  collect     收集构建产物到 build/artifacts 目录"
-    echo "  clean       清理编译中间文件（保留构建目录结构）"
-    echo "  cleanall    完全清理构建目录（删除 build/kernel_* 和 build/l4re_*）"
-    echo ""
-    echo "单包重建 (--pkg <name>):"
-    echo "  定位该包在 pkg/ 与 ext-pkg/ 两处的 OBJ 目录并编译，再自动重打包引导镜像，"
-    echo "  解决'改了包内代码但改动不进镜像'的老问题。"
-    echo "  --force     先 make clean 再重建（依赖库变动后强制重链，如改了 l4re 核心头文件）"
-    echo ""
-    echo "示例:"
-    echo "  $0                       # 默认 RPi4 全量构建"
-    echo "  $0 --board bbb l4re      # 为 BBB 构建 L4Re"
-    echo "  $0 --board bbb all       # BBB 全量构建"
-    echo "  $0 --board bbb collect   # 仅收集 BBB 构建产物"
-    echo "  $0 --board virt --pkg native_shell          # 重建 native_shell 并重打包"
-    echo "  $0 --board virt --pkg ext4 --force          # clean 重建 ext4（含 client+server）"
-    echo "  ENTRY=cyclictest $0 --board virt --pkg native_shell  # 指定重打包入口"
-    echo ""
-    echo "环境变量:"
-    echo "  CROSS_COMPILE  交叉编译器前缀 (会根据 --board 自动设置)"
-    echo "  ENTRY          指定单个启动入口 (virt 默认生成全部常用入口)"
-    echo ""
-    echo "virt 平台启动入口 (bootstrap 目标生成以下镜像):"
-    echo "  native-shell      原生 Shell (默认)"
-    echo "  virt-blk          VirtIO 块设备驱动测试"
-    echo "  virt-blk-shell    ext4 文件系统 + native_shell (Phase 3b)"
-    echo "  用法: ENTRY=virt-blk-shell ./build.sh --board virt bootstrap"
-    echo ""
-    echo "构建产物将收集到: build/artifacts/"
+resolve_package() {
+    local name=$1 candidate
+    [[ $name =~ ^[[:alnum:]_+.-]+(/[[:alnum:]_+.-]+)*$ && $name != *..* ]] || error "Invalid package: $name"
+    if [[ -f $PROJ_ROOT/l4mk/pkg/$name/Control ]]; then echo "pkg/$name"; return; fi
+    local matches=()
+    for candidate in "$PROJ_ROOT/l4mk/pkg"/*/"$name"/Control; do
+        [[ -f $candidate ]] || continue
+        candidate=${candidate#"$PROJ_ROOT/l4mk/"}; matches+=("${candidate%/Control}")
+    done
+    [[ ${#matches[@]} == 1 ]] || error "Unknown or ambiguous package: $name (use its path under pkg/)"
+    echo "${matches[0]}"
 }
 
-main "$@"
+build_product() {
+    local roots extra name t
+    roots=$(awk -v entry="$entry" -v board="$BOARD" '
+      /^entry(\[.*\])? / {active=($2==entry); if(active) found=1}
+      active && /^# board / && $3!=board {invalid=1}
+      active && /^# build-packages / {sub(/^# build-packages /,""); print}
+      END {if (!found || invalid) exit 1}' "$CONF_DIR/modules.list") || error "Boot entry $entry is unavailable on $BOARD"
+    local goals=(pkg/bootstrap pkg/l4re-core/sigma0 pkg/l4re-core/moe pkg/l4re-core/l4re_itas pkg/l4re-core/ned)
+    for name in $roots; do goals+=("pkg/$name"); done
+    # Package options add roots; L4Re resolves their transitive Control dependencies.
+    for t in $(sed -n 's/^CONFIG_PKG_\([A-Z0-9_]*\)=y$/\1/p' "$L4RE_BUILD/.config.all"); do
+        [[ $t != NATIVE_SHELL ]] || continue
+        name=$(echo "$t" | tr 'A-Z_' 'a-z-')
+        if [[ $name == ada ]]; then goals+=(pkg/ada/libgnat pkg/ada/examples)
+        else goals+=("pkg/$name"); fi
+    done
+    if [[ -n $pkg ]]; then
+        extra=$(resolve_package "$pkg")
+        if [[ $force == 1 && -d $L4RE_BUILD/$extra ]]; then
+            "$MAKE" -C "$PROJ_ROOT/l4mk/$extra" O="$L4RE_BUILD" L4DIR="$PROJ_ROOT/l4mk" clean
+        fi
+        if [[ $compile_only == 1 ]]; then
+            board_make "${parallel[@]}" "$extra"
+            return
+        fi
+        goals+=("$extra")
+        local consumers
+        consumers=$(python3 "$PROJ_ROOT/tools/build_packages.py" consumers "$L4RE_BUILD" "$extra")
+        for name in $consumers; do goals+=("$name"); done
+    fi
+    if [[ -z $roots ]]; then
+        # Upstream example entries have no product-specific root list.
+        board_make "${parallel[@]}" all
+    else
+        board_make "${parallel[@]}" "${goals[@]}"
+    fi
+}
+
+publish() {
+    local src=$1 dst=$2 temp
+    [[ -s $src ]] || error "Missing artifact: $src"
+    if [[ -f $dst ]] && cmp -s "$src" "$dst"; then return; fi
+    mkdir -p "$(dirname "$dst")"
+    temp=$(mktemp "$dst.XXXXXX")
+    cp -p "$src" "$temp" && mv -f "$temp" "$dst"
+}
+
+pack() (
+    mkdir -p "$L4RE_BUILD/images"
+    local stage
+    stage=$(mktemp -d "$L4RE_BUILD/images/.pack.XXXXXX")
+    trap 'rm -rf "$stage"' EXIT
+    local search="$KERNEL_BUILD:$CONF_DIR"
+    if [[ $BOARD == bbb || $BOARD == rpi4 ]]; then
+        # Only this named credential file may override the shipped empty store.
+        if [[ -f $BUILD_OUT/credentials/$BOARD/board-shadow ]]; then
+            ln -s "$BUILD_OUT/credentials/$BOARD/board-shadow" "$stage/board-shadow"
+            search="$stage:$search"
+        fi
+    fi
+    board_make BOOTSTRAP_OUTPUT_DIR="$stage" E="$entry" MODULES_LIST="$CONF_DIR/modules.list" \
+        MODULE_SEARCH_PATH="$search" elfimage
+    [[ -s "$stage/${image##*/}" ]] || error "Image builder produced no ELF for $entry"
+    mv -f "$stage/${image##*/}" "$image"
+    ln -s "${image##*/}" "$stage/current"
+    mv -f "$stage/current" "$L4RE_BUILD/images/bootstrap.elf"
+    collect
+)
+collect() {
+    [[ -s $image ]] || error "Build the $BOARD/$entry image first: $image"
+    publish "$KERNEL_BUILD/fiasco" "$ARTIFACTS/fiasco"
+    publish "$image" "$ARTIFACTS/$entry/bootstrap.elf"
+}
+case "$target" in
+    cleanall) rm -rf "$L4RE_BUILD" "$KERNEL_BUILD" "$ARTIFACTS" ;;
+    clean)
+        if [[ -d $KERNEL_BUILD ]]; then "$MAKE" -C "$KERNEL_BUILD" clean; fi
+        if [[ -d $L4RE_BUILD ]]; then board_make clean; rm -rf "$L4RE_BUILD/images"; fi
+        rm -rf "$ARTIFACTS" ;;
+    menuconfig|defconfig|oldconfig|olddefconfig|syncconfig|savedefconfig|allnoconfig|allyesconfig) configure ;;
+    kernel) init_sources; build_kernel; publish "$KERNEL_BUILD/fiasco" "$ARTIFACTS/fiasco" ;;
+    collect) select_entry; collect ;;
+    all|l4re|bootstrap|pkg)
+        prepare_board
+        select_entry
+        if [[ $target == all || ( $target != l4re && $compile_only == 0 && ! -s $KERNEL_BUILD/fiasco ) ]]; then build_kernel; fi
+        build_product
+        if [[ $target != l4re && $compile_only == 0 ]]; then pack; fi ;;
+    *) usage >&2; exit 1 ;;
+esac

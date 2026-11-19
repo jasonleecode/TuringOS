@@ -37,8 +37,7 @@
 #   --keep      保留所有轮次日志    (默认仅保留失败轮次)
 #
 # CI 示例
-#   ./build.sh --board virt all          # 先构建（含 smp-spawn-bench entry）
-#   tools/ci_smp_smoke.sh -n 20          # 跑 20 轮，全过才 exit 0
+#   tools/ci_smp_smoke.sh -n 20          # 空目录构建专用镜像后测试
 #
 # ============================================================================
 set -u
@@ -50,7 +49,7 @@ TIMEOUT=30
 SMP=2
 # 默认用 CI 专用短时长镜像（smp-spawn-bench-ci entry: -D 8 -s 3），单轮 ~10s，
 # 单位 wall time 样本数约为 30s 版的 3 倍。需要长压可 --image 换回完整版。
-IMAGE="$PROJ_ROOT/build/l4re_virt/images/bootstrap_smp-spawn-bench-ci.elf"
+IMAGE=""
 KEEP_LOGS=0
 
 while [[ $# -gt 0 ]]; do
@@ -74,11 +73,13 @@ if ! [[ "$ITERS" =~ ^[1-9][0-9]*$ ]]; then
 fi
 QEMU=qemu-system-arm
 command -v "$QEMU" >/dev/null 2>&1 || { echo "错误: 找不到 $QEMU"; exit 2; }
-if [ ! -f "$IMAGE" ]; then
-    echo "错误: 找不到镜像 $IMAGE"
-    echo "请先构建: ./build.sh --board virt all"
-    exit 2
+if [[ -z $IMAGE ]]; then
+    build_dir=$(mktemp -d "${TMPDIR:-/tmp}/turingos-smp.XXXXXX") || exit 2
+    trap 'rm -rf "$build_dir"' EXIT
+    BUILD_OUT="$build_dir" ENTRY=smp-spawn-bench-ci "$PROJ_ROOT/build.sh" --board virt all || exit 2
+    IMAGE="$build_dir/artifacts/virt/smp-spawn-bench-ci/bootstrap.elf"
 fi
+[[ -s $IMAGE ]] || { echo "找不到测试镜像 $IMAGE" >&2; exit 2; }
 if [ "$SMP" -lt 2 ]; then
     echo "警告: --smp $SMP < 2，该崩溃只在多核复现，测试将无意义。"
 fi

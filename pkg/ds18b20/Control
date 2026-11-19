@@ -1,2 +1,2 @@
-requires: stdlibs libstdc++ libio-vbus l4util
+requires: stdlibs libstdc++ libio-vbus l4util turingos-interfaces
 provides: ds18b20

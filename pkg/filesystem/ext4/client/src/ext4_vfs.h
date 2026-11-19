@@ -18,7 +18,7 @@
 #include <l4/l4re_vfs/backend>
 #include <l4/re/util/unique_cap>
 #include <l4/re/dataspace>
-#include "../../include/ext4_file_proto.h"
+#include <l4/turingos/ext4_file_proto.h>
 
 class Ext4_file_vfs : public L4Re::Vfs::Be_file_pos
 {

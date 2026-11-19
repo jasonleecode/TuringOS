@@ -22,7 +22,7 @@
 
 #include <l4/re/env>
 
-#include <net_ipc.h>
+#include <l4/turingos/net_ipc.h>
 
 int main(int argc, char **argv)
 {

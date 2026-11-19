@@ -151,9 +151,8 @@ private:
   void push_argv_strings();
   void push_env_strings();
 
-  // Open a file from the ext4 filesystem and return its dataspace.
-  // relpath: path relative to ext4 root, e.g. "bin/hello"
-  Const_dataspace open_from_ext4(const char *relpath);
+  // Copy an absolute VFS path into a private loader dataspace.
+  Const_dataspace load_vfs_file(const char *path);
 
   // Child cap slots — pre-allocated in constructor.
   L4Re::Util::Unique_del_cap<L4::Task>     _child_task_cap;

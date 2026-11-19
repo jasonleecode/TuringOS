@@ -19,7 +19,7 @@
 #include <l4/sys/cxx/ipc_array>
 #include <l4/sys/cxx/ipc_types>
 #include <l4/re/util/object_registry>
-#include "../../include/ext4_file_proto.h"
+#include <l4/turingos/ext4_file_proto.h>
 
 // Combined IPC interface: L4Re::Namespace (query/ls) + Ext4_dir_ops (mkdir/unlink).
 //

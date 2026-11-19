@@ -2,7 +2,7 @@
 
 #include <l4/sys/cxx/ipc_epiface>
 #include <l4/sys/types.h>
-#include <spawn_ipc.h>
+#include <l4/turingos/spawn_ipc.h>
 #include <l4/re/util/object_registry>
 #include <pthread.h>
 #include <pthread-l4.h>

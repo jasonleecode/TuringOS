@@ -1,0 +1,2 @@
+provides: turingos-interfaces
+requires: l4re

@@ -9,7 +9,7 @@
 #include "log.h"
 #include "termbox2.h"
 
-#include <spawn_ipc.h>
+#include <l4/turingos/spawn_ipc.h>
 #include <l4/re/env>
 #include <l4/re/mem_alloc>
 #include <l4/sys/ipc.h>

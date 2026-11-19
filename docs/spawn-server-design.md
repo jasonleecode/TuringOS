@@ -319,7 +319,7 @@ App_model::open_from_ext4(const char *path)
 - [ ] `pkg/spawn/server/src/spawnd.h/.cc`：op_spawn / op_wait / op_kill
 - [ ] `pkg/spawn/server/src/Makefile` + `pkg/spawn/Control`
 - [ ] `l4mk/pkg/spawn` 符号链接
-- [ ] `l4mk/conf/modules.list` 加 `module spawnd`
+- [ ] `conf/modules.list` 加 `module spawnd`
 - [ ] `conf/native-shell.cfg` 加 spawnd 启动 + cap 传递
 - [ ] `pkg/native_shell` shell_exec.cc 改为 IPC 调用
 - [ ] 验证：`run hello` 输出 "Hello World!"

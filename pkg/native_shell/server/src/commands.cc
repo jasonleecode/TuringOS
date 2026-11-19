@@ -14,16 +14,16 @@
 #include <l4/re/namespace>
 #include <l4/re/util/cap_alloc>
 #include <l4/sys/factory>
-#include <ext4_file_proto.h>
+#include <l4/turingos/ext4_file_proto.h>
 #include <l4/rtc/rtc.h>
 #include <l4/util/util.h>
-#include <temp_proto.h>           /* ds18b20-server protocol (via PRIVATE_INCDIR) */
-#include <radio_proto.h>          /* tef6686hn-server protocol (via PRIVATE_INCDIR) */
+#include <l4/turingos/temp_proto.h>           /* ds18b20-server protocol */
+#include <l4/turingos/radio_proto.h>          /* tef6686hn-server protocol */
 
 #include "commands.h"
 #include "shell_exec.h"
 #include "log.h"
-#include <spawn_ipc.h>
+#include <l4/turingos/spawn_ipc.h>
 
 shell_cmd commands[] = {
     /* general */

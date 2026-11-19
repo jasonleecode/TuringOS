@@ -1,11 +1,70 @@
-# ============================================================
-# TuringOS 启动模块配置
-# ============================================================
+# vim:set ft=l4mods:
+# Module configuration file for single image mode
+#
+# kernel, sigma0 and moe are always loaded automatically
+#
+# add kernel command line arguments with
+#  kernel fiasco arguments...
+# the second argument (here 'fiasco') is the binary name
+#
+# add sigma command line arguments with
+#  sigma0 sigma0 arguments...
+# the second argument (here 'sigma0') is the binary name
+#
+# add roottask command line arguments with
+#  roottask moe arguments...
+# the second argument (here 'moe') is the binary name
+#
+# modaddr: address where modules start, relative to begin of RAM
+#   this statement is either global (before first entry statement)
+#   or per entry
+#
+# 'module' variants
+# - module file: add file
+# - module[uncompress] module name: uncompress module (gzip) before adding it
+# - module[glob] /some/path/*.foo: add all file matching
+# - module[perl] perl-code: Perl code returns array of files to include
+# - module[shell] shell-code: Return list of files to include
+# - module[fname=FOO] /some/path/bar: The file 'bar' will be added as the
+#                                     module named 'FOO'.
+# - moe file.cfg: expands to
+#        roottask moe rom/file.cfg
+#        module file.cfg
+#
+# Modules can have an arbitrary number of attributes (key-value-pairs). The
+# attribute key must be prefixed by 'attr:':
+# - module[attr:nodes=0-3]: The attribute 'nodes' with the value '0-3'
+#
+# Define a module group:
+#  group oftenneedthose
+#  module one
+#  module two
+#  module ...
+#
+# Use a module group:
+#  entry someentry
+#  module-group oftenneedthose
+#
+# Include other module list files:
+#  include /path/to/other.list
+#
+# Set defaults:
+# - default-kernel: set default kernel including arguments
+# - default-sigma0: set default sigma0 including arguments
+# - default-roottask: set default roottask including arguments
+
+modaddr 0x01100000
+
+default-kernel fiasco -serial_esc
+default-bootstrap bootstrap
+default-entry native-shell
 
 # ------------------------------------------------------------
 # Entry: imx6ul-native-shell - i.MX6UL 原生 Shell
 # ------------------------------------------------------------
 entry imx6ul-native-shell
+# board imx6ul
+# build-packages authd native_shell
 
 kernel fiasco -serial_esc
 module sigma0
@@ -17,13 +76,176 @@ module authd
 module native_shell
 module libreadline.so
 
-# ------------------------------------------------------------
-# Entry: native-shell - 默认系统 (native_shell + fb-drv + ext4 + 网络)
-# ------------------------------------------------------------
-entry native-shell
+entry hello
+# build-packages hello
+roottask moe --init=rom/hello
+module l4re
+module hello
 
+entry hello-cfg
+# build-packages hello
+kernel fiasco -serial_esc
+roottask moe rom/hello.cfg
+module l4re
+module ned
+module hello.cfg
+module hello
+
+entry hello-2
+# build-packages hello
+kernel fiasco -serial_esc
+roottask moe rom/hello-2.cfg
+module l4re
+module ned
+module hello-2.cfg
+module hello
+
+entry hello-shared
+# build-packages hello
+roottask moe --init=rom/ex_hello_shared
+module l4re
+module ex_hello_shared
+
+entry[arch=x86|amd64] framebuffer-example
+roottask moe rom/x86-fb.cfg
+module x86-fb.cfg
+module l4re
+module ned
+module io
+module io/x86-legacy.devs
+module x86-fb.io
+module fb-drv
+module mag
+module ex_fb_spectrum_cc
+
+entry[arch=x86|amd64|arm|arm64] L4Linux-basic
+roottask moe rom/l4lx.cfg
+module l4lx.cfg
+module l4re
+module ned
+module[arch=arm64] arch/l4/boot/dts/simple.dtb
+module[uncompress] vmlinuz
+module[perl] "ramdisk-$ENV{ARCH}.rd"
+
+entry[arch=x86|amd64] L4Linux-mag
+moe l4lx-gfx.cfg
+module l4re
+module ned
+module io
+module fb-drv
+module mag
+module io/x86-legacy.devs
+module l4lx-x86.io
+module[uncompress] vmlinuz
+module[perl] "ramdisk-$ENV{ARCH}.rd"
+
+entry[arch=arm|arm64|amd64|riscv] VM-basic
+moe vm-basic.cfg
+module l4re
+module ned
+module uvmm
+module[arch=arm,fname=virt.dtb]                   dtb/virt-arm_virt-32.dtb
+module[arch=arm64,fname=virt.dtb]                 dtb/virt-arm_virt-64.dtb
+module[arch=amd64,fname=virt.dtb]                 dtb/virt-pc.dtb
+module[arch=riscv,bits=32,fname=virt.dtb]         dtb/virt-riscv32.dtb
+module[arch=riscv,bits=64,fname=virt.dtb]         dtb/virt-riscv64.dtb
+module[arch=arm,fname=linux]                      https://l4re.org/download/Linux-kernel/arm32/zImage-6.19.8
+module[arch=arm64,fname=linux]                    https://l4re.org/download/Linux-kernel/arm64/Image-6.19.8
+module[arch=amd64,fname=linux]                    https://l4re.org/download/Linux-kernel/x86-64/bzImage-6.19.8
+module[arch=riscv,bits=64,fname=linux]            https://l4re.org/download/Linux-kernel/riscv64/Image-6.11.4.gz
+module[arch=arm,fname=ramdisk.cpio.gz]            https://l4re.org/download/ramdisks/ramdisk-armv7.cpio.gz
+module[arch=arm64,fname=ramdisk.cpio.gz]          https://l4re.org/download/ramdisks/ramdisk-armv8-64.cpio.gz
+module[arch=amd64,fname=ramdisk.cpio.gz]          https://l4re.org/download/ramdisks/ramdisk-amd64.cpio.gz
+module[arch=riscv,bits=64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-riscv64.cpio.gz
+
+entry[arch=arm|arm64|amd64|riscv] VM-multi
+moe vm-multi.cfg
+module l4re
+module ned
+module cons
+module uvmm
+module[arch=arm,fname=virt.dtb]                   dtb/virt-arm_virt-32.dtb
+module[arch=arm64,fname=virt.dtb]                 dtb/virt-arm_virt-64.dtb
+module[arch=amd64,fname=virt.dtb]                 dtb/virt-pc.dtb
+module[arch=riscv,bits=32,fname=virt.dtb]         dtb/virt-riscv32.dtb
+module[arch=riscv,bits=64,fname=virt.dtb]         dtb/virt-riscv64.dtb
+module[arch=arm,fname=linux]                      https://l4re.org/download/Linux-kernel/arm32/zImage-6.19.8
+module[arch=arm64,fname=linux]                    https://l4re.org/download/Linux-kernel/arm64/Image-6.19.8
+module[arch=amd64,fname=linux]                    https://l4re.org/download/Linux-kernel/x86-64/bzImage-6.19.8
+module[arch=riscv,bits=64,fname=linux]            https://l4re.org/download/Linux-kernel/riscv64/Image-6.11.4.gz
+module[arch=arm,fname=ramdisk.cpio.gz]            https://l4re.org/download/ramdisks/ramdisk-armv7.cpio.gz
+module[arch=arm64,fname=ramdisk.cpio.gz]          https://l4re.org/download/ramdisks/ramdisk-armv8-64.cpio.gz
+module[arch=amd64,fname=ramdisk.cpio.gz]          https://l4re.org/download/ramdisks/ramdisk-amd64.cpio.gz
+module[arch=riscv,bits=64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-riscv64.cpio.gz
+
+entry[arch=arm|arm64|amd64|riscv] VM-multi-p2p
+moe vm-multi-p2p.cfg
+module l4re
+module ned
+module cons
+module l4vio_net_p2p
+module uvmm
+module[arch=arm,fname=virt.dtb]                   dtb/virt-arm_virt-32.dtb
+module[arch=arm64,fname=virt.dtb]                 dtb/virt-arm_virt-64.dtb
+module[arch=amd64,fname=virt.dtb]                 dtb/virt-pc.dtb
+module[arch=riscv,bits=32,fname=virt.dtb]         dtb/virt-riscv32.dtb
+module[arch=riscv,bits=64,fname=virt.dtb]         dtb/virt-riscv64.dtb
+module[arch=arm,fname=linux]                      https://l4re.org/download/Linux-kernel/arm32/zImage-6.19.8
+module[arch=arm64,fname=linux]                    https://l4re.org/download/Linux-kernel/arm64/Image-6.19.8
+module[arch=amd64,fname=linux]                    https://l4re.org/download/Linux-kernel/x86-64/bzImage-6.19.8
+module[arch=riscv,bits=64,fname=linux]            https://l4re.org/download/Linux-kernel/riscv64/Image-6.11.4.gz
+module[arch=arm,fname=ramdisk.cpio.gz]            https://l4re.org/download/ramdisks/ramdisk-armv7.cpio.gz
+module[arch=arm64,fname=ramdisk.cpio.gz]          https://l4re.org/download/ramdisks/ramdisk-armv8-64.cpio.gz
+module[arch=amd64,fname=ramdisk.cpio.gz]          https://l4re.org/download/ramdisks/ramdisk-amd64.cpio.gz
+module[arch=riscv,bits=64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-riscv64.cpio.gz
+
+entry[arch=arm|arm64|amd64] VM-basic-pci
+moe vm-basic-pci.cfg
+module l4re
+module ned
+module cons
+module io
+module[arch=arm|arm64,fname=pci.io] arm-virt64.io
+module[arch=amd64]                  pci.io
+module uvmm
+module[arch=arm,  fname=virt-pci.dtb]     dtb/virt-arm_virt-64_pci.dtb
+module[arch=arm64,fname=virt-pci.dtb]     dtb/virt-arm_virt-64_pci.dtb
+module[arch=amd64,fname=virt-pci.dtb]     dtb/virt-pc.dtb
+module[arch=arm,fname=linux]              https://l4re.org/download/Linux-kernel/arm32/zImage-6.19.8
+module[arch=arm64,fname=linux]            https://l4re.org/download/Linux-kernel/arm64/Image-6.19.8
+module[arch=amd64,fname=linux]            https://l4re.org/download/Linux-kernel/x86-64/bzImage-6.19.8
+module[arch=arm,fname=ramdisk.cpio.gz]    https://l4re.org/download/ramdisks/ramdisk-armv7.cpio.gz
+module[arch=arm64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-armv8-64.cpio.gz
+module[arch=amd64,fname=ramdisk.cpio.gz]  https://l4re.org/download/ramdisks/ramdisk-amd64.cpio.gz
+
+entry ipcbench
+# build-packages benchmark/ipcbench
 kernel fiasco -serial_esc
 module sigma0
+roottask moe rom/ipcbench.cfg
+module l4re
+module ned
+module ipcbench.cfg
+module ipcbench
+
+# TuringOS 自定义入口
+entry fiasco-base-test
+# build-packages hello
+roottask moe --init=rom/hello
+module l4re
+module hello
+
+entry demo
+# build-packages hello l4re-core/lua
+roottask moe rom/demo.cfg
+module l4re
+module[fname=ned] lua
+module demo.cfg
+module hello
+
+entry native-shell
+# board virt
+# build-packages native_shell net-cluster netd authd syslogd spawn devmgr ds18b20 tef6686hn virtio-block-driver filesystem/ext4 io/io rtc fb-drv lvgl/demo hello benchmark/cyclictest benchmark/ipcbench benchmark/smp-spawn exectest
 roottask moe rom/native-shell.cfg
 module l4re
 module ned
@@ -32,108 +254,57 @@ module virt-full.io
 module io
 module rtc
 module virtio-block-driver
+module netd
+module netcat
+module ifconfig
+module dhcp
+module ping
+module nslookup
+module udpecho
+module tcpecho
+module mqtt
+module telnetd
 module ext4fs
+module authd
+module syslogd
+module spawnd
+module devmgr
+module ds18b20-server
+module tef6686hn-server
 module fb-drv
+module lvgl-demo
 module native_shell
 module libreadline.so
+module hello
 module cyclictest
 module ipcbench
 module smp-spawn-bench
+module exectest
 
-# ------------------------------------------------------------
-# Entry: demo - 默认演示系统 (使用 native_shell)
-# ------------------------------------------------------------
-entry demo
-
-# 内核
-kernel fiasco -serial_esc
-
-# 初始内存管理器
-module sigma0
-
-# 根任务服务器，直接启动 native_shell（不通过 ned）
-roottask moe /bin/native_shell
-
-# L4Re 核心库和工具 - native_shell 可能需要
-module l4re
-
-# native_shell 可执行程序
-module native_shell
-
-# Readline 和 history 库
-module libreadline.so
-
-# ------------------------------------------------------------
-# Entry: native - 直接启动 native_shell (不使用 ned)
-# ------------------------------------------------------------
-entry native
-
-kernel fiasco -serial_esc
-module sigma0
-roottask /bin/native_shell
-module l4re
-
-# native_shell 和依赖库
-module native_shell
-module libreadline.so
-
-# ------------------------------------------------------------
-# Entry: fiasco-base-test - 基础测试系统 (启动 hello)
-# ------------------------------------------------------------
-entry fiasco-base-test
-
-kernel fiasco -serial_esc
-module sigma0
-roottask moe rom/hello
+entry uart-test
+# board virt
+# build-packages uart-test virtio-serial io/io
+roottask moe rom/uart-test.cfg
 module l4re
 module ned
-module hello
+module uart-test.cfg
+module virt-serial.io
+module io
+module virtio-serial
+module uart-test
 
-# ------------------------------------------------------------
-# Entry: shell - Lua 交互式 shell (通过 ned)
-# ------------------------------------------------------------
-entry shell
-
-kernel fiasco -serial_esc
-module sigma0
-roottask moe rom/shell
-module l4re
-module ned
-
-# ------------------------------------------------------------
-# Entry: fb-test - 帧缓冲显示测试 (需要 QEMU --gpu 启动)
-# ------------------------------------------------------------
 entry fb-test
-
-kernel fiasco -serial_esc
-module sigma0
+# board virt
+# build-packages fb-test
 roottask moe rom/fb-test.cfg
 module l4re
 module ned
 module fb-test.cfg
 module fb-test
 
-# ------------------------------------------------------------
-# Entry: lvgl-demo - LVGL 图形演示 (需要 QEMU --gpu 启动)
-# ------------------------------------------------------------
-entry lvgl-demo
-
-kernel fiasco -serial_esc
-module sigma0
-roottask moe rom/lvgl-demo.cfg
-module l4re
-module ned
-module lvgl-demo.cfg
-module fb-drv
-module lvgl-demo
-
-# ------------------------------------------------------------
-# Entry: fb-drv - 帧缓冲驱动服务器 + 客户端测试 (需要 QEMU --gpu 启动)
-# ------------------------------------------------------------
 entry fb-drv
-
-kernel fiasco -serial_esc
-module sigma0
+# board virt
+# build-packages fb-drv fb-test
 roottask moe rom/fb-drv.cfg
 module l4re
 module ned
@@ -141,42 +312,61 @@ module fb-drv.cfg
 module fb-drv
 module fb-test
 
-# ------------------------------------------------------------
-# Entry: tcp-server - TCP echo server (virtio-net + lwIP)
-# ------------------------------------------------------------
-entry tcp-server
 
-kernel fiasco -serial_esc
-module sigma0
-roottask moe rom/tcp-server.cfg
+entry wamr
+# build-packages wamr
+roottask moe rom/wamr.cfg
 module l4re
 module ned
-module tcp-server.cfg
-module virt-net.io
-module io
-module tcp_server
+module wamr.cfg
+module wamr-example
 
-# ------------------------------------------------------------
-# Entry: virt-blk - VirtIO block driver test
-# ------------------------------------------------------------
-entry virt-blk
-
-kernel fiasco -serial_esc
-module sigma0
-roottask moe rom/virt-blk.cfg
+entry smp-test
+# build-packages smp-test
+roottask moe rom/smp-test.cfg
 module l4re
 module ned
-module virt-blk.cfg
-module virt-blk.io
-module io
-module virtio-block-driver
-module ext4fs
+module smp-test.cfg
+module smp-test
 
-# ------------------------------------------------------------
-# Entry: cyclictest - scheduling latency benchmark
-# ------------------------------------------------------------
+
+entry lvgl-demo
+# board virt
+# build-packages io/io fb-drv lvgl/demo
+roottask moe rom/lvgl-demo.cfg
+module l4re
+module ned
+module lvgl-demo.cfg
+module virt-full.io
+module io
+module fb-drv
+module lvgl-demo
+
+entry smp-spawn-bench
+# build-packages spawn benchmark/smp-spawn
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/smp-spawn-bench.cfg
+module l4re
+module ned
+module smp-spawn-bench.cfg
+module spawnd
+module smp-spawn-bench
+
+entry smp-spawn-bench-ci
+# board virt
+# build-packages spawn benchmark/smp-spawn
+kernel fiasco -serial_esc
+module sigma0
+roottask moe rom/smp-spawn-bench-ci.cfg
+module l4re
+module ned
+module smp-spawn-bench-ci.cfg
+module spawnd
+module smp-spawn-bench
+
 entry cyclictest
-
+# build-packages benchmark/cyclictest
 kernel fiasco -serial_esc
 module sigma0
 roottask moe rom/cyclictest.cfg
@@ -185,6 +375,34 @@ module ned
 module cyclictest.cfg
 module cyclictest
 
-# Entry: ipcbench - IPC performance benchmark (lat/ctx/thru/hack)
-# (entry lives in l4mk/conf/modules.list; this comment is for reference only)
-# run: make -C build/l4re_virt elfimage E=ipcbench
+
+entry bbb-native-shell
+# board bbb
+# build-packages native_shell io/io rtc authd
+moe bbb-native-shell.cfg
+module l4re
+module ned
+module io
+module bbb-hw.io
+module rtc
+module authd
+module board-shadow
+module native_shell
+module libreadline.so
+
+entry rpi4-native-shell
+# board rpi4
+# build-packages native_shell authd
+moe rpi4-native-shell.cfg
+module l4re
+module ned
+module authd
+module board-shadow
+module native_shell
+module libreadline.so
+
+entry minimal
+# build-packages l4re-core/ned
+moe minimal.cfg
+module l4re
+module ned

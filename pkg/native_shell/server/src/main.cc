@@ -13,7 +13,7 @@
 #include <l4/devfs/devfs.h>
 #include <l4/re/env>
 #include <l4/re/l4aux.h>
-#include <auth_ipc.h>            /* authd Auth_svr protocol (via PRIVATE_INCDIR) */
+#include <l4/turingos/auth_ipc.h>
 #include "commands.h"
 #include "shell_exec.h"
 #include "log.h"

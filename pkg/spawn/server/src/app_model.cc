@@ -12,7 +12,11 @@
 #include <l4/sys/task>
 #include <l4/sys/ipc.h>
 #include <l4/re/l4aux.h>
-#include <ext4_file_proto.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <cerrno>
+#include <climits>
 #include <cstring>
 #include <cstdio>
 
@@ -92,9 +96,8 @@ void Spawn_model_base::set_args(int argc, const char* const* argv,
 Spawn_model_base::Const_dataspace
 Spawn_model_base::open_file(const char* name)
 {
-  // Phase 3: ext4 absolute paths like "/ext4/bin/hello"
-  if (strncmp(name, "/ext4/", 6) == 0)
-    return open_from_ext4(name + 6);
+  if (name[0] == '/')
+    return load_vfs_file(name);
 
   // Phase 1: ROM — try "rom/<name>" then bare "<name>" in Env_ns.
   L4Re::Util::Env_ns ens;
@@ -119,80 +122,37 @@ Spawn_model_base::open_file(const char* name)
 }
 
 Spawn_model_base::Const_dataspace
-Spawn_model_base::open_from_ext4(const char *relpath)
+Spawn_model_base::load_vfs_file(const char *path)
 {
-  // Build env namespace query path "ext4/<relpath>".
-  // Env_ns handles multi-component Partly_resolved responses automatically,
-  // traversing the Ext4_namespace tree until it reaches a file object.
-  char qpath[520];
-  snprintf(qpath, sizeof(qpath), "ext4/%s", relpath);
-
-  L4Re::Util::Env_ns ens;
-  L4::Cap<Ext4_file_ops> raw = ens.query<Ext4_file_ops>(qpath);
-  if (!raw.is_valid()) {
-    fprintf(stderr, "[spawnd] open_from_ext4: '%s' not found\n", relpath);
-    return Const_dataspace();
+  int fd = open(path, O_RDONLY);
+  if (fd < 0)
+    return {};
+  struct stat64 st;
+  Const_dataspace ds;
+  if (fstat64(fd, &st) == 0 && st.st_size > 0
+      && static_cast<unsigned long long>(st.st_size) <= ULONG_MAX - L4_PAGESIZE) {
+    unsigned long size = static_cast<unsigned long>(st.st_size);
+    ds = Const_dataspace(L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>());
+    auto env = L4Re::Env::env();
+    l4_addr_t addr = 0;
+    if (ds.is_valid() && env->mem_alloc()->alloc(size, ds.get()) >= 0
+        && env->rm()->attach(&addr, size, L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
+                             L4::Ipc::make_cap_rw(ds.get()), 0) >= 0) {
+      unsigned long done = 0;
+      while (done < size) {
+        ssize_t n = read(fd, reinterpret_cast<void *>(addr + done),
+                         (size - done > 65536) ? 65536 : size - done);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) break;
+        done += n;
+      }
+      env->rm()->detach(addr, nullptr);
+      if (done != size) ds = Const_dataspace();
+    } else {
+      ds = Const_dataspace();
+    }
   }
-  // Take ownership so the cap slot is freed when this scope exits.
-  L4Re::Util::Unique_del_cap<Ext4_file_ops> fops(raw);
-
-  // The ext4 file protocol is now streaming (no whole-file DS).  Open the file
-  // server-side via op_setup to obtain the shared bounce buffer + size, then
-  // stream the whole file into a private DS the ELF loader can map.
-  auto buf = L4Re::Util::make_unique_cap<L4Re::Dataspace>();
-  if (!buf.is_valid()) {
-    fprintf(stderr, "[spawnd] open_from_ext4: buf cap alloc failed\n");
-    return Const_dataspace();
-  }
-  l4_uint64_t fsize = 0;
-  l4_uint32_t bsz   = 0;
-  long r = fops.get()->setup(buf.get(), fsize, bsz);
-  if (r < 0 || bsz == 0) {
-    fprintf(stderr, "[spawnd] open_from_ext4: setup failed (%ld)\n", r);
-    return Const_dataspace();
-  }
-
-  unsigned long dsz = fsize ? (unsigned long)fsize : 1UL;
-  Const_dataspace ds(L4Re::Util::cap_alloc.alloc<L4Re::Dataspace>());
-  if (!ds.is_valid()
-      || L4Re::Env::env()->mem_alloc()->alloc(dsz, ds.get()) < 0) {
-    fprintf(stderr, "[spawnd] open_from_ext4: dest DS alloc failed\n");
-    return Const_dataspace();
-  }
-
-  // Map bounce buffer + destination locally and copy the file across.
-  auto rm = L4Re::Env::env()->rm();
-  l4_addr_t buf_addr = 0, dst_addr = 0;
-  unsigned long buf_map = ((unsigned long)bsz + 4095UL) & ~4095UL;
-  unsigned long dst_map = (dsz + 4095UL) & ~4095UL;
-  bool ok = (rm->attach(&buf_addr, buf_map,
-                        L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
-                        L4::Ipc::make_cap_rw(buf.get()), 0) >= 0)
-         && (rm->attach(&dst_addr, dst_map,
-                        L4Re::Rm::F::Search_addr | L4Re::Rm::F::RW,
-                        L4::Ipc::make_cap_rw(ds.get()), 0) >= 0);
-
-  for (l4_uint64_t off = 0; ok && off < fsize; ) {
-    l4_uint32_t chunk = ((fsize - off) > bsz) ? bsz : (l4_uint32_t)(fsize - off);
-    l4_uint32_t got = 0;
-    if (fops.get()->pread(off, chunk, got) < 0) { ok = false; break; }
-    if (got == 0) break;  // unexpected EOF
-    memcpy(reinterpret_cast<void *>(dst_addr + off),
-           reinterpret_cast<void *>(buf_addr), got);
-    off += got;
-  }
-
-  if (buf_addr) rm->detach(buf_addr, nullptr);
-  if (dst_addr) rm->detach(dst_addr, nullptr);
-  fops.get()->release();   // done with the file handle (frees server object)
-
-  if (!ok) {
-    fprintf(stderr, "[spawnd] open_from_ext4: stream read failed\n");
-    return Const_dataspace();
-  }
-
-  printf("[spawnd] open_from_ext4: '%s' %llu bytes\n", relpath,
-         (unsigned long long)fsize);
+  close(fd);
   return ds;
 }
 

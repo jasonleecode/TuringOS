@@ -1,8 +1,8 @@
 #!/bin/bash
 # QEMU 调试启动脚本
 
-PROJ_ROOT="$(cd "$(dirname "$0")" && pwd)"
-ARTIFACTS="$PROJ_ROOT/build/artifacts"
+PROJ_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ARTIFACTS="${BUILD_OUT:-$PROJ_ROOT/build}/artifacts"
 
 echo "=========================================="
 echo "  QEMU 调试模式"
@@ -13,7 +13,7 @@ timeout 5 qemu-system-arm \
     -M virt \
     -cpu cortex-a15 \
     -m 256M \
-    -kernel "$ARTIFACTS/bootstrap-image-bbb.elf" \
+    -kernel "$ARTIFACTS/virt/native-shell/bootstrap.elf" \
     -nographic \
     -serial mon:stdio \
     -d guest_errors,unimp,cpu_reset \

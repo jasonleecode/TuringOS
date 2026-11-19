@@ -440,10 +440,10 @@ AM335x 平台适配代码已完成（时钟初始化、UART、I2C、RTC、GPIO�
 
 1. 创建 `pkg/<name>/Control`，列出所有 `REQUIRES_LIBS` 依赖
 2. Makefile 的 `PKGDIR` 层级：顶层用 `.`，`server/` 用 `..`，`server/src/` 用 `../..`
-3. 编译：`make -C build/l4re_virt pkg/<name>`（不要用 `PKGS=` 变量）
+3. 单包编译可运行 `./build.sh --board virt --pkg <name> --compile-only`。
 4. `build.sh` 会自动同步 `l4mk/pkg/` 符号链接，无需手动 `ln -s`
-5. 运行镜像：在 `l4mk/conf/modules.list` 添加 entry，用 `E=<entry> elfimage` 打包
-6. **重要**：修改任何包后必须执行 `make -C build/l4re_virt E=<entry> elfimage` 重新打包引导镜像，`pkg/bootstrap` 不会自动检测二进制变化
+5. 运行镜像：在 `conf/modules.list` 添加 entry，用 `E=<entry> elfimage` 打包
+6. 运行 `ENTRY=<entry> ./build.sh --board virt --pkg <name>` 会重链受影响的程序，并发布该入口的新镜像。
 
 ---
 

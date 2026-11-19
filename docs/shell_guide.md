@@ -78,7 +78,7 @@ make -C build/l4re_virt
 
 ## Boot 配置
 
-Native shell 的启动项定义在 `l4mk/conf/modules.list`：
+Native shell 的启动项定义在 `conf/modules.list`：
 
 ```
 entry native-shell

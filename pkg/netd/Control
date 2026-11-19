@@ -1,2 +1,2 @@
-requires: stdlibs libstdc++ lwip libc_be_socket_lwip libio-vbus l4re-util l4util
+requires: stdlibs libstdc++ lwip libc_be_socket_lwip libio-vbus l4re-util l4util turingos-interfaces
 provides: netd
