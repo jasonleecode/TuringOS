@@ -55,6 +55,11 @@ void draw(lv_event_t *e)
             for (int x = 7; x <= 20; x += 6)
                 p.rect(x, y, x + 4, y + 3, x == 19 ? 0xf18a4a : 0x47749f);
         break;
+    case Icon::minesweeper:
+        p.rect(2, 23, 30, 30, 0x60778d); p.rect(2, 22, 29, 27, 0xc9d7df);
+        p.rect(9, 2, 12, 25, 0x374a58);
+        p.tri(12, 2, 28, 8, 12, 15, 0xbd3028);
+        p.tri(12, 2, 24, 7, 12, 9, 0xf96a51); break;
     case Icon::display:
         p.rect(2, 4, 30, 27, 0x80572e); p.rect(2, 3, 29, 25, 0xffdc84);
         p.rect(5, 6, 26, 22, 0x6eacec); p.rect(19, 8, 23, 11, 0xffee96);

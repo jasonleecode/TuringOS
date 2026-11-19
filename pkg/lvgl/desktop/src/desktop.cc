@@ -1,4 +1,5 @@
 #include "icons.h"
+#include "minesweeper.h"
 #include <l4/lvgl/port.h>
 #include <algorithm>
 #include <cmath>
@@ -16,9 +17,10 @@ extern const lv_font_t desktop_font;
 namespace {
 constexpr int bar_height = 36;
 constexpr unsigned ink = 0x173552, white = 0xffffff;
-struct App { const char *name; Icon icon; };
+struct App { const char *name; Icon icon; int w = 330, h = 219; };
 const App computer{"我的电脑", Icon::computer};
-const App calculator{"计算器", Icon::calculator};
+const App calculator{"计算器", Icon::calculator, 255, 254};
+const App mines_app{"扫雷", Icon::minesweeper, 280, 328};
 const App display{"显示属性", Icon::display};
 const App clock_app{"日期和时间", Icon::calendar};
 
@@ -176,6 +178,84 @@ void calculator_view(lv_obj_t *body, int w)
     lv_obj_center(label(reset, "清除"));
 }
 
+Minesweeper game;
+bool flag_mode;
+lv_obj_t *cell_labels[Minesweeper::cells], *mine_status, *flag_button;
+
+void draw_board()
+{
+    static constexpr unsigned numbers[] = {ink, 0x154eaf, 0x19703c, 0xa62520, 0x473085,
+                                          0x842f21, 0x126d72, 0x262c35, 0x4c5860};
+    bool lost = game.phase() == Minesweeper::Phase::lost;
+    if (lost) lv_label_set_text(mine_status, "踩雷了");
+    else if (game.phase() == Minesweeper::Phase::won) lv_label_set_text(mine_status, "胜利");
+    else lv_label_set_text_fmt(mine_status, "余雷 %d", game.remaining_flags());
+    for (int i = 0; i < Minesweeper::cells; ++i) {
+        const auto &cell = game.at(i);
+        auto text = cell_labels[i];
+        auto tile = lv_obj_get_parent(text);
+        bool visible = cell.open || (lost && cell.mine);
+        unsigned color = ink;
+        const char *mark = "";
+        char digit[] = "0";
+        if (cell.flag) {
+            mark = lost && !cell.mine ? "X" : "旗";
+            color = 0xa12723;
+        } else if (visible && cell.mine) {
+            mark = "雷";
+        } else if (cell.open && cell.neighbors) {
+            digit[0] += cell.neighbors;
+            mark = digit;
+            color = numbers[cell.neighbors];
+        }
+        fill(tile, cell.open && cell.mine ? 0xff9280 : visible ? 0xece9d8 : 0xb9c9d8);
+        lv_label_set_text(text, mark);
+        lv_obj_set_style_text_color(text, lv_color_hex(color), 0);
+    }
+}
+
+void play_tile(lv_event_t *e)
+{
+    int i = static_cast<int>(reinterpret_cast<uintptr_t>(lv_event_get_user_data(e)));
+    if (flag_mode) game.toggle_flag(i);
+    else game.reveal(i, lv_tick_get());
+    draw_board();
+}
+
+void new_game(lv_event_t *)
+{
+    game = {};
+    flag_mode = false;
+    lv_obj_remove_state(flag_button, LV_STATE_CHECKED);
+    draw_board();
+}
+
+void mines_view(lv_obj_t *body, int w, int h)
+{
+    mine_status = label(body, "");
+    lv_obj_set_pos(mine_status, 10, 9);
+    flag_button = button(body, w - 146, 5, 62, 27, [](lv_event_t *) {
+        flag_mode = !flag_mode;
+        lv_obj_set_state(flag_button, LV_STATE_CHECKED, flag_mode);
+    });
+    fill(flag_button, 0xf7f4ec); edge(flag_button, 0x929596, 3);
+    lv_obj_set_style_bg_color(flag_button, lv_color_hex(0xffcd80), LV_STATE_CHECKED);
+    lv_obj_center(label(flag_button, "插旗"));
+    auto reset = button(body, w - 76, 5, 66, 27, new_game);
+    fill(reset, 0xf7f4ec); edge(reset, 0x929596, 3);
+    lv_obj_center(label(reset, "新一局"));
+    int size = std::min(w - 12, h - 43) / Minesweeper::side;
+    int left = (w - size * Minesweeper::side) / 2;
+    for (int i = 0; i < Minesweeper::cells; ++i) {
+        auto tile = button(body, left + i % Minesweeper::side * size, 37 + i / Minesweeper::side * size,
+                           size, size, play_tile, reinterpret_cast<void *>(static_cast<uintptr_t>(i)));
+        edge(tile, 0x83909b);
+        cell_labels[i] = label(tile, "");
+        lv_obj_center(cell_labels[i]);
+    }
+    new_game(nullptr);
+}
+
 void select_wallpaper(lv_event_t *e)
 {
     bool meadow = lv_event_get_user_data(e) != nullptr;
@@ -242,8 +322,8 @@ void open_app(lv_event_t *e)
     }
     close_window(nullptr);
     current = app;
-    int w = std::min(width - 16, app == &calculator ? 255 : 330);
-    int h = std::min(height - bar_height - 8, app == &calculator ? 254 : 219);
+    int w = std::min(width - 16, app->w);
+    int h = std::min(height - bar_height - 8, app->h);
     window = box(desktop, (width - w) / 2, (height - bar_height - h) / 2, w, h);
     fill(window, 0x1555bb); edge(window, 0x073a90, 6);
     auto title = box(window, 2, 1, w - 6, 30);
@@ -263,14 +343,15 @@ void open_app(lv_event_t *e)
     auto body = box(window, 3, 32, w - 8, h - 37);
     fill(body, 0xece9d8);
     if (app == &calculator) calculator_view(body, w - 8);
+    else if (app == &mines_app) mines_view(body, w - 8, h - 37);
     else details(body, w - 8);
     lv_label_set_text(task_label, app->name);
     lv_obj_remove_flag(task, LV_OBJ_FLAG_HIDDEN);
 }
 
-void link_row(lv_obj_t *parent, const App &app, int x, int y, int w)
+void link_row(lv_obj_t *parent, const App &app, int x, int y, int w, int h)
 {
-    auto row = button(parent, x, y, w, 48, open_app, const_cast<App *>(&app));
+    auto row = button(parent, x, y, w, h, open_app, const_cast<App *>(&app));
     lv_obj_set_style_bg_color(row, lv_color_hex(0xb5d6fd), LV_STATE_HOVERED);
     lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_HOVERED);
     lv_obj_align(desktop_icon(row, app.icon, 32), LV_ALIGN_LEFT_MID, 6, 0);
@@ -297,10 +378,12 @@ void make_menu()
     fill(left, white); fill(right, 0xd4e5f9);
     lv_obj_set_pos(label(left, "程序", 0x375d86), 12, 8);
     lv_obj_set_pos(label(right, "系统", 0x375d86), 12, 8);
-    link_row(left, calculator, 1, 40, half - 2);
-    link_row(left, clock_app, 1, 90, half - 2);
-    link_row(right, computer, 1, 40, half - 2);
-    link_row(right, display, 1, 90, half - 2);
+    int row_h = std::min(46, (h - 103 - 30) / 3);
+    link_row(left, calculator, 1, 30, half - 2, row_h);
+    link_row(left, clock_app, 1, 30 + row_h, half - 2, row_h);
+    link_row(left, mines_app, 1, 30 + 2 * row_h, half - 2, row_h);
+    link_row(right, computer, 1, 30, half - 2, row_h);
+    link_row(right, display, 1, 30 + row_h, half - 2, row_h);
     auto footer = box(menu, 1, h - 42, w - 4, 39);
     gradient(footer, 0x438ee5, 0x1a64c8);
     auto quit = button(footer, w - 118, 2, 108, 34, [](lv_event_t *) { lv_port_quit(); });
@@ -309,9 +392,9 @@ void make_menu()
     show_menu(false);
 }
 
-void shortcut(const App &app, int y)
+void shortcut(const App &app, int y, int x = 7)
 {
-    auto obj = button(desktop, 7, y, 90, 70, open_app, const_cast<App *>(&app));
+    auto obj = button(desktop, x, y, 90, 70, open_app, const_cast<App *>(&app));
     lv_obj_align(desktop_icon(obj, app.icon, 39), LV_ALIGN_TOP_MID, 0, 1);
     lv_obj_align(label(obj, app.name, 0x20344a), LV_ALIGN_TOP_MID, 1, 46);
     lv_obj_align(label(obj, app.name, white), LV_ALIGN_TOP_MID, 0, 45);
@@ -339,6 +422,8 @@ void create_ui()
     lv_obj_set_pos(wallpaper, (width - 800 * scale / LV_SCALE_NONE) / 2,
                    (height - 600 * scale / LV_SCALE_NONE) / 2);
     shortcut(computer, 13); shortcut(calculator, 94); shortcut(display, 175);
+    if (height - bar_height >= 326) shortcut(mines_app, 256);
+    else shortcut(mines_app, 13, 104);
 
     bar = box(screen, 0, height - bar_height, width, bar_height);
     gradient(bar, 0x367eec, 0x1954c1);
